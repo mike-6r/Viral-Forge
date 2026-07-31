@@ -87,7 +87,7 @@ def ip_bootstrap_settings(**overrides: object) -> Settings:
         "public_base_url": "http://198.51.100.10",
         "preview_public_base_url": "http://198.51.100.10",
         "oauth_callback_base_url": "http://198.51.100.10",
-        "trusted_hosts": "198.51.100.10",
+        "trusted_hosts": "198.51.100.10,localhost,api",
         "publishing_enabled": False,
         "publishing_youtube_enabled": False,
         "youtube_oauth_enabled": False,

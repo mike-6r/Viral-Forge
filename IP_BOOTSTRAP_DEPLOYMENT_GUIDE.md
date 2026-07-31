@@ -60,8 +60,9 @@ a hostname is available.
 
 ## Explicit restrictions
 
-`ip_bootstrap` requires PostgreSQL, strong API/preview secrets, exact-IP trusted
-hosts, no wildcard CORS, and disabled development actors. It blocks OAuth
+`ip_bootstrap` requires PostgreSQL, strong API/preview secrets, trusted hosts
+containing the exact public IP plus `localhost,api` for private Docker health
+checks, no wildcard CORS, and disabled development actors. It blocks OAuth
 callback construction, new destination-account connections, publish requests,
 and confirmation with: `A trusted HTTPS hostname is required before this feature
 can be enabled.` TikTok, YouTube OAuth, and all publishing flags are rejected at
