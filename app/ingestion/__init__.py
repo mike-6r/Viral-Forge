@@ -1,0 +1,1 @@
+"""Approved-source ingestion domain."""

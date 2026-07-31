@@ -1,0 +1,16 @@
+# All positive weights total 100. Watermark and repost penalties are subtracted.
+weights:
+  official_uploader: 30
+  original_upload: 18
+  resolution: 15
+  bitrate: 8
+  frame_rate: 5
+  completeness: 10
+  audio_present: 4
+  preferred_platform: 3
+  earliest_upload: 7
+penalties:
+  repost_likelihood: 20
+  platform_watermark: 25
+  unrelated_branding: 18
+  cropped_or_vertical: 8

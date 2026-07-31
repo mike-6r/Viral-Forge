@@ -1,0 +1,8 @@
+# ViralForge Milestone 1.1 Findings
+
+| ID | Severity | Affected files | Evidence | Correction | Verification | Status |
+|---|---|---|---|---|---|---|
+| VF-11-001 | HIGH | `alembic/versions/0001_foundation.py` | The unreleased initial migration imported application models and called `Base.metadata.create_all/drop_all`. | Retain the revision identity but replace it with self-contained explicit PostgreSQL/Alembic DDL matching the audited model schema. | Static migration test, clean upgrade/downgrade/re-upgrade, schema drift check. | Corrected; no application-model import or metadata call remains. |
+| VF-11-002 | MEDIUM | `alembic/versions/0002_harden_foundation.py` | It conditionally inferred current columns at runtime to accommodate the mutable initial migration. | Remove the unreleased corrective migration and fold its audited schema into corrected `0001`. | Migration history inspection and clean migration cycle. | Corrected; `0002` was removed before release and its schema is in `0001`. |
+| VF-11-003 | MEDIUM | `docker-compose.yml`, `Dockerfile`, `.dockerignore`, `scripts/dev.ps1` | Compose lacked worker PostgreSQL dependency/restart controls and scripts omitted operational commands. | Targeted Compose/script/image hardening. | Docker config/build/run when available. | Corrected statically; Docker is unavailable for runtime verification. |
+| VF-11-004 | MEDIUM | `scripts/schema_drift.py`, `tests/test_migrations.py` | No migration-driven schema parity test existed. | Add a disposable migration/drift verifier that compares migrated schema with model metadata and documents PostgreSQL verification. | Pytest migration-focused tests and CLI script. | Corrected; clean SQLite migration drift check passes. |

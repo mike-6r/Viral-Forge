@@ -1,0 +1,92 @@
+# Example records only. Add verified public agency accounts here; never add credentials.
+agencies:
+  - name: Example City Police Department
+    aliases: [Example PD, ECPD]
+    jurisdiction: Example City
+    country: US
+    state_or_province: Example State
+    city_or_region: Example City
+    agency_type: law_enforcement
+    official_website: https://example.invalid/police
+    youtube_channels: [UC_EXAMPLE_OFFICIAL]
+    rss_feeds: []
+    press_release_pages: []
+    discovery_keywords: [body camera, public safety]
+    excluded_keywords: [community event]
+    enabled_discovery_providers: [YOUTUBE, RSS]
+    trusted_source: false
+    language: en
+    polling_priority: 5
+    categories_of_interest: [body camera, public information]
+    tiktok_accounts: []
+    instagram_accounts: []
+    facebook_pages: []
+    x_accounts: []
+    verification_status: VERIFIED
+    enabled: false
+  - name: New York City Police Department
+    aliases: [NYPD, Inside NYPD]
+    jurisdiction: New York City, New York
+    country: US
+    state_or_province: New York
+    city_or_region: New York City
+    agency_type: law_enforcement
+    official_website: https://www.nyc.gov/site/nypd/index.page
+    youtube_channels: [UCfJJ9vqyUPRkyUvnGSB-56Q]
+    youtube_channel_urls: [https://www.youtube.com/channel/UCfJJ9vqyUPRkyUvnGSB-56Q]
+    rss_feeds: []
+    press_release_pages: []
+    discovery_keywords: [body worn camera, critical incident, officer involved shooting, shooting, public safety, press conference]
+    excluded_keywords: [recruitment, community event, ceremony]
+    enabled_discovery_providers: [YOUTUBE]
+    trusted_source: true
+    language: en
+    polling_priority: 10
+    polling_interval_seconds: 21600
+    categories_of_interest: [body camera, public information, critical incident, press conference]
+    verification_status: VERIFIED
+    enabled: true
+  - name: Los Angeles Fire Department
+    aliases: [LAFD]
+    jurisdiction: Los Angeles, California
+    country: US
+    state_or_province: California
+    city_or_region: Los Angeles
+    agency_type: public_safety
+    official_website: https://www.lafd.org
+    youtube_channels: [UClRY1Wn49zxMgnIGKxB__NA]
+    youtube_channel_urls: [https://www.youtube.com/channel/UClRY1Wn49zxMgnIGKxB__NA]
+    rss_feeds: []
+    press_release_pages: []
+    discovery_keywords: [fire response, rescue, public safety, incident]
+    excluded_keywords: [recruitment, community event, ceremony]
+    enabled_discovery_providers: [YOUTUBE]
+    trusted_source: true
+    language: en
+    polling_priority: 8
+    polling_interval_seconds: 21600
+    categories_of_interest: [fire response, rescue, aviation, public information]
+    verification_status: VERIFIED
+    enabled: true
+  - name: Seattle Police Department
+    aliases: [SPD, Seattle PD]
+    jurisdiction: Seattle, Washington
+    country: US
+    state_or_province: Washington
+    city_or_region: Seattle
+    agency_type: law_enforcement
+    official_website: https://www.seattle.gov/police
+    youtube_channels: [UCDtvIahG09kSqzWazIyl7FQ]
+    youtube_channel_urls: [https://www.youtube.com/channel/UCDtvIahG09kSqzWazIyl7FQ]
+    rss_feeds: []
+    press_release_pages: []
+    discovery_keywords: [body camera, pursuit, arrest, public safety]
+    excluded_keywords: [recruitment, community event, ceremony]
+    enabled_discovery_providers: [YOUTUBE]
+    trusted_source: true
+    language: en
+    polling_priority: 8
+    polling_interval_seconds: 21600
+    categories_of_interest: [body camera, pursuit, arrest, public information]
+    verification_status: VERIFIED
+    enabled: true

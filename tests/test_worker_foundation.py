@@ -1,0 +1,19 @@
+from app.worker import (
+    application_heartbeat,
+    audit_cleanup_preview,
+    celery_app,
+    generate_clip_opportunities,
+    run_video_analysis,
+    stale_job_detection_preview,
+)
+
+
+def test_safe_worker_tasks_are_registered_and_explicit_previews():
+    assert "viralforge.heartbeat" in celery_app.tasks
+    assert application_heartbeat() == {"status": "ok", "service": "viralforge-worker"}
+    assert stale_job_detection_preview()["status"] == "preview"
+    assert "No records deleted" in audit_cleanup_preview()["message"]
+    assert "viralforge.run_video_analysis" in celery_app.tasks
+    assert run_video_analysis.name == "viralforge.run_video_analysis"
+    assert "viralforge.generate_clip_opportunities" in celery_app.tasks
+    assert generate_clip_opportunities.name == "viralforge.generate_clip_opportunities"

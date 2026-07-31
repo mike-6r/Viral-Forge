@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "viralforge"
+version = "0.1.0"
+description = "Human-controlled short-form content operations platform foundation"
+requires-python = ">=3.12"
+dependencies = [
+  "defusedxml>=0.7,<1",
+  "alembic>=1.14,<2", "celery[redis]>=5.4,<6", "fastapi>=0.115,<1",
+  "discord.py>=2.4,<3", "yt-dlp>=2025.1.0",
+  "beautifulsoup4>=4.12,<5", "httpx>=0.28,<1", "PyYAML>=6.0,<7",
+  "pydantic-settings>=2.6,<3", "psycopg[binary]>=3.2,<4", "python-multipart>=0.0.20,<1",
+  "sqlalchemy>=2.0,<3", "structlog>=24.4,<26", "uvicorn[standard]>=0.32,<1"
+  , "faster-whisper>=1.1,<2"
+]
+
+[project.optional-dependencies]
+dev = ["mypy>=1.13,<2", "pytest>=8.3,<9", "pytest-cov>=6,<7", "ruff>=0.8,<1", "types-defusedxml>=0.7,<1", "types-PyYAML>=6,<7"]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501", "E701", "E702"]
+
+[tool.ruff.lint.per-file-ignores]
+# Released migration revisions are immutable; 0018 predates this hardening pass.
+"alembic/versions/0018_analytics_feedback.py" = ["I001"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = []
+exclude = ["alembic"]
+disable_error_code = ["untyped-decorator"]
+
+[[tool.mypy.overrides]]
+module = ["celery.*", "structlog.*"]
+ignore_missing_imports = true

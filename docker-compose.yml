@@ -1,0 +1,58 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: viralforge
+      POSTGRES_USER: viralforge
+      POSTGRES_PASSWORD: viralforge
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U viralforge -d viralforge"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes: [postgres_data:/var/lib/postgresql/data]
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  api:
+    build: .
+    env_file: .env
+    environment:
+      VIRALFORGE_FFMPEG_PATH: ffmpeg
+      VIRALFORGE_FFPROBE_PATH: ffprobe
+      VIRALFORGE_LOCAL_STORAGE_ROOT: /viralforge-data/uploads
+      VIRALFORGE_VIDEO_WORK_ROOT: /viralforge-data/production
+      VIRALFORGE_ANALYSIS_MODEL_CACHE_ROOT: /viralforge-data/models
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports: ["8000:8000"]
+    volumes: [viralforge_data:/viralforge-data]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  worker:
+    build: .
+    env_file: .env
+    environment:
+      VIRALFORGE_FFMPEG_PATH: ffmpeg
+      VIRALFORGE_FFPROBE_PATH: ffprobe
+      VIRALFORGE_LOCAL_STORAGE_ROOT: /viralforge-data/uploads
+      VIRALFORGE_VIDEO_WORK_ROOT: /viralforge-data/production
+      VIRALFORGE_ANALYSIS_MODEL_CACHE_ROOT: /viralforge-data/models
+    command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO"]
+    depends_on:
+      redis: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+    volumes: [viralforge_data:/viralforge-data]
+volumes:
+  postgres_data:
+  viralforge_data:

@@ -1,0 +1,30 @@
+# TEMPORARY OPERATOR-ONLY HTTP PROFILE. Traffic is not encrypted. Restrict
+# port 80 to the operator's public IP in UFW whenever possible.
+http://{$VIRALFORGE_PUBLIC_IP} {
+    encode zstd gzip
+    request_body {
+        max_size 110MB
+    }
+    header {
+        -Server
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Cache-Control "no-store"
+    }
+    # This remains a reverse proxy only: no root or static media mapping is set.
+    # Range requests pass through to ViralForge's token-validated stream route.
+    @preview path /preview/* /api/v1/previews/*
+    handle @preview {
+        reverse_proxy api:8000 {
+            flush_interval -1
+            transport http {
+                read_timeout 20m
+                write_timeout 20m
+            }
+        }
+    }
+    handle {
+        reverse_proxy api:8000
+    }
+}

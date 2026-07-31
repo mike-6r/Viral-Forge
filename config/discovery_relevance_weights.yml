@@ -1,0 +1,11 @@
+weights:
+  official_source: 30
+  agency_match: 20
+  keyword_match: 15
+  category_match: 15
+  recency: 10
+  usable_video: 10
+penalties:
+  excluded_keyword: 50
+  duplicate: 25
+  missing_media: 30

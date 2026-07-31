@@ -1,0 +1,130 @@
+services:
+  postgres:
+    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-viralforge}
+      POSTGRES_USER: ${POSTGRES_USER:-viralforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env.production with mode 0600}
+    restart: unless-stopped
+    logging: &logging
+      driver: local
+      options: {max-size: "10m", max-file: "5"}
+    networks: [private]
+
+  redis:
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1000"]
+    logging: *logging
+    networks: [private]
+
+  volume-init:
+    build: .
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /viralforge-data/scheduler && chown -R 10001:10001 /viralforge-data"]
+    volumes: [viralforge_data:/viralforge-data]
+    restart: "no"
+    networks: [private]
+
+  migrate:
+    build: .
+    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres: {condition: service_healthy}
+      volume-init: {condition: service_completed_successfully}
+    user: "10001:10001"
+    networks: [private]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  api:
+    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+    # Compose appends list values when overlays are merged.  Reset the
+    # development 8000:8000 mapping so only Caddy exposes host ports.
+    ports: !reset []
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    restart: unless-stopped
+    user: "10001:10001"
+    stop_grace_period: 45s
+    logging: *logging
+    networks: [private]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  worker:
+    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=${VIRALFORGE_ANALYSIS_MAX_CONCURRENCY:-1}"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+    user: "10001:10001"
+    stop_grace_period: 10m
+    logging: *logging
+    networks: [private]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  scheduler:
+    build: .
+    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    command: ["celery", "-A", "app.worker:celery_app", "beat", "--loglevel=INFO", "--schedule=/viralforge-data/scheduler/celerybeat-schedule"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    volumes: [viralforge_data:/viralforge-data]
+    restart: unless-stopped
+    user: "10001:10001"
+    stop_grace_period: 30s
+    logging: *logging
+    networks: [private]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  discord:
+    build: .
+    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    command: ["python", "-m", "app.discord_bot"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    volumes: [viralforge_data:/viralforge-data]
+    restart: unless-stopped
+    user: "10001:10001"
+    stop_grace_period: 30s
+    logging: *logging
+    networks: [private]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+  caddy:
+    image: caddy:2.8-alpine
+    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile.production.example:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    stop_grace_period: 30s
+    logging: *logging
+    networks: [edge, private]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+
+volumes:
+  caddy_data:
+  caddy_config:
+  backup_data:
+
+networks:
+  edge:
+  private:
+    internal: true

@@ -1,0 +1,32 @@
+{$VIRALFORGE_PUBLIC_HOST} {
+    encode zstd gzip
+    request_body {
+        max_size 110MB
+    }
+    header {
+        -Server
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+    }
+    # Apply rate limiting at the edge/provider. Preview routes are private
+    # capabilities and must not be cached; Caddy never maps local media paths.
+    @preview path /preview/* /api/v1/previews/*
+    handle @preview {
+        reverse_proxy api:8000 {
+            flush_interval -1
+            transport http {
+                read_timeout 20m
+                write_timeout 20m
+            }
+        }
+    }
+    handle {
+        reverse_proxy api:8000 {
+            transport http {
+                read_timeout 5m
+                write_timeout 5m
+            }
+        }
+    }
+}

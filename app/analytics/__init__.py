@@ -1,0 +1,1 @@
+"""Future analytics storage boundary."""
