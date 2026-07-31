@@ -3,7 +3,7 @@
 # Caddy HTTPS on 80/443 and must be used once a trusted hostname exists.
 services:
   caddy:
-    env_file: ${VIRALFORGE_IP_BOOTSTRAP_ENV_FILE:-.env.ip-bootstrap}
+    env_file: !override ["${VIRALFORGE_IP_BOOTSTRAP_ENV_FILE:-.env.ip-bootstrap}"]
     ports: !override ["80:80"]
     volumes:
       - ./Caddyfile.ip-bootstrap.example:/etc/caddy/Caddyfile:ro

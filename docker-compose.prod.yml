@@ -1,6 +1,6 @@
 services:
   postgres:
-    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    env_file: !override ["${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-viralforge}
       POSTGRES_USER: ${POSTGRES_USER:-viralforge}
@@ -27,7 +27,7 @@ services:
 
   migrate:
     build: .
-    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    env_file: !override ["${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}"]
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     depends_on:
@@ -41,7 +41,7 @@ services:
     cap_drop: [ALL]
 
   api:
-    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    env_file: !override ["${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}"]
     command: ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
     # Compose appends list values when overlays are merged.  Reset the
     # development 8000:8000 mapping so only Caddy exposes host ports.
@@ -59,7 +59,7 @@ services:
     cap_drop: [ALL]
 
   worker:
-    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    env_file: !override ["${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}"]
     command: ["celery", "-A", "app.worker:celery_app", "worker", "--loglevel=INFO", "--concurrency=${VIRALFORGE_ANALYSIS_MAX_CONCURRENCY:-1}"]
     depends_on:
       migrate: {condition: service_completed_successfully}
@@ -73,7 +73,7 @@ services:
 
   scheduler:
     build: .
-    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    env_file: !override ["${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}"]
     command: ["celery", "-A", "app.worker:celery_app", "beat", "--loglevel=INFO", "--schedule=/viralforge-data/scheduler/celerybeat-schedule"]
     depends_on:
       migrate: {condition: service_completed_successfully}
@@ -89,7 +89,7 @@ services:
 
   discord:
     build: .
-    env_file: ${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}
+    env_file: !override ["${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}"]
     command: ["python", "-m", "app.discord_bot"]
     depends_on:
       migrate: {condition: service_completed_successfully}

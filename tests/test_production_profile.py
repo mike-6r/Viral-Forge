@@ -10,6 +10,7 @@ def test_production_profile_is_private_and_has_all_operational_services():
     assert "internal: true" in compose
     assert '"80:80", "443:443"' in compose
     assert "ports: !reset []" in compose
+    assert 'env_file: !override ["${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}"]' in compose
     assert "service_completed_successfully" in compose
     assert "/viralforge-data" in compose
 
@@ -47,6 +48,7 @@ def test_ip_bootstrap_profile_is_explicit_http_only_and_keeps_api_private():
     caddy = Path("Caddyfile.ip-bootstrap.example").read_text(encoding="utf-8")
     environment = Path(".env.ip-bootstrap.example").read_text(encoding="utf-8")
     assert 'ports: !override ["80:80"]' in compose
+    assert 'env_file: !override ["${VIRALFORGE_IP_BOOTSTRAP_ENV_FILE:-.env.ip-bootstrap}"]' in compose
     assert "http://{$VIRALFORGE_PUBLIC_IP}" in caddy
     assert "file_server" not in caddy
     assert "VIRALFORGE_DEPLOYMENT_MODE=ip_bootstrap" in environment
