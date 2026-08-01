@@ -3,6 +3,7 @@ import uuid
 
 os.environ["VIRALFORGE_ENVIRONMENT"] = "test"
 os.environ["VIRALFORGE_ENABLE_DEVELOPMENT_ACTOR"] = "true"
+os.environ["VIRALFORGE_TRUSTED_HOSTS"] = "testserver"
 
 import pytest
 from fastapi.testclient import TestClient
