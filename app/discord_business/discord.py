@@ -10,7 +10,11 @@ from discord import app_commands
 from sqlalchemy.orm import Session
 
 from app.common.db import get_session
-from app.discord_business.models import DiscordGuildConfig
+from app.discord_business.models import (
+    DiscordGuildConfig,
+    DiscordGuildResource,
+    DiscordPublishedEmbed,
+)
 from app.discord_business.service import (
     BusinessRepository,
     DiscordBusinessError,
@@ -48,6 +52,53 @@ ACTION_LABELS = {
     "open_logs": "Open Logs",
     "submit_feature": "Submit Feature Request",
 }
+
+# Names used by the first ViralForge community configuration. These are considered
+# cleanup candidates only after an owner explicitly confirms setup-reset.
+LEGACY_MANAGED_CHANNEL_NAMES = frozenset(
+    {
+        "rules",
+        "changelog",
+        "welcome",
+        "feature-overview",
+        "plans",
+        "platform-status",
+        "introductions",
+        "showcase",
+        "feedback",
+        "bug-reports",
+        "help",
+        "releases",
+        "product-updates",
+        "community-lounge",
+        "resources",
+        "customer-lounge",
+        "customer-announcements",
+        "creator-strategy",
+        "creator-resources",
+        "bodycams-daily-hq",
+        "support-desk",
+        "open-a-ticket",
+        "ticket-commands",
+        "staff-announcements",
+        "moderation-queue",
+        "support-queue",
+        "reported-messages",
+        "staff-notes",
+        "ops-dashboard",
+        "projects",
+        "review-inbox",
+        "posting-queue",
+        "discovery-queue",
+        "source-review",
+        "media-analysis",
+        "clip-candidates",
+        "content-packages",
+        "publishing-queue",
+        "errors",
+        "audit-log",
+    }
+)
 
 
 def is_guild_owner(interaction: discord.Interaction) -> bool:
@@ -266,6 +317,124 @@ async def apply_server_plan(guild: discord.Guild, *, apply_changes: bool) -> tup
         )
         session.commit()
         return [], changed
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
+async def reset_legacy_setup(guild: discord.Guild, *, apply_changes: bool) -> tuple[list[str], int]:
+    """Preview or remove only old ViralForge-managed setup resources.
+
+    This intentionally leaves current resources, private tickets, and unrelated user resources intact.
+    Discord channel deletion is only performed after the owner repeats with apply_changes=True.
+    """
+    config = load_config()
+    current_resource_keys = {
+        (item.resource_type, item.resource_key) for item in plan_resources(config)
+    }
+    current_forum_names = {
+        item.name for item in plan_resources(config) if item.resource_type == "channel" and item.kind == "forum"
+    }
+    current_embed_keys = set(config["embeds"]["embeds"])
+    repo, session = BusinessRepository(), _session()
+    actions: list[str] = []
+    changed = 0
+    try:
+        guild_config = repo.guild_config(session, guild.id, guild.name, config["server"]["version"])
+        resources = list(
+            session.query(DiscordGuildResource)
+            .filter(DiscordGuildResource.guild_config_id == guild_config.id)
+            .all()
+        )
+        obsolete = [
+            resource
+            for resource in resources
+            if (resource.resource_type, resource.resource_key) not in current_resource_keys
+        ]
+        obsolete_channel_ids = {
+            int(resource.discord_id)
+            for resource in obsolete
+            if resource.resource_type == "channel" and resource.discord_id.isdigit()
+        }
+
+        for resource in obsolete:
+            if resource.resource_type != "channel":
+                continue
+            channel = guild.get_channel(int(resource.discord_id))
+            if isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
+                actions.append(f"delete legacy channel #{channel.name}")
+                if apply_changes:
+                    await channel.delete(reason="ViralForge owner-confirmed legacy setup cleanup")
+                    session.delete(resource)
+                    changed += 1
+            elif apply_changes:
+                session.delete(resource)
+
+        orphan_channels: list[discord.TextChannel | discord.ForumChannel] = []
+        orphan_channels.extend(guild.text_channels)
+        orphan_channels.extend(guild.forums)
+        for channel in orphan_channels:
+            replaces_legacy_text_channel = (
+                isinstance(channel, discord.TextChannel)
+                and channel.name in current_forum_names
+                and any(forum.name == channel.name for forum in guild.forums)
+            )
+            if (
+                channel.id in obsolete_channel_ids
+                or (
+                    channel.name not in LEGACY_MANAGED_CHANNEL_NAMES
+                    and not replaces_legacy_text_channel
+                )
+            ):
+                continue
+            actions.append(f"delete legacy channel #{channel.name}")
+            if apply_changes:
+                await channel.delete(reason="ViralForge owner-confirmed legacy setup cleanup")
+                changed += 1
+
+        for resource in obsolete:
+            if resource.resource_type != "category":
+                continue
+            category = guild.get_channel(int(resource.discord_id))
+            if isinstance(category, discord.CategoryChannel):
+                if category.channels:
+                    actions.append(f"retain non-empty legacy category {category.name}")
+                    continue
+                actions.append(f"delete empty legacy category {category.name}")
+                if apply_changes:
+                    await category.delete(reason="ViralForge owner-confirmed legacy setup cleanup")
+                    session.delete(resource)
+                    changed += 1
+            elif apply_changes:
+                session.delete(resource)
+
+        for resource in obsolete:
+            if resource.resource_type != "role":
+                continue
+            role = guild.get_role(int(resource.discord_id))
+            if role is not None and not role.is_default():
+                actions.append(f"delete legacy role @{role.name}")
+                if apply_changes:
+                    await role.delete(reason="ViralForge owner-confirmed legacy setup cleanup")
+                    session.delete(resource)
+                    changed += 1
+            elif apply_changes:
+                session.delete(resource)
+
+        if apply_changes:
+            for published in (
+                session.query(DiscordPublishedEmbed)
+                .filter(DiscordPublishedEmbed.guild_config_id == guild_config.id)
+                .all()
+            ):
+                if published.embed_key not in current_embed_keys:
+                    session.delete(published)
+            guild_config.setup_state = "APPLIED"
+            guild_config.setup_revision += 1
+            session.commit()
+        return actions, changed
     except Exception:
         session.rollback()
         raise
@@ -635,6 +804,21 @@ def business_presence_interval() -> int:
     return int(load_config()["branding"].get("presence", {}).get("rotation_seconds", 45))
 
 
+def _reset_summary(actions: list[str], changed: int, apply_changes: bool) -> str:
+    preview = "\n".join(f"• {action}" for action in actions[:12]) or "No legacy setup resources found."
+    suffix = "" if len(actions) <= 12 else f"\n… and {len(actions) - 12} more."
+    if apply_changes:
+        return (
+            f"Legacy cleanup completed: {changed} managed resources removed. "
+            "Current setup resources, private tickets, and unrelated channels were preserved."
+        )
+    return (
+        f"Dry-run: {len(actions)} legacy cleanup actions found. "
+        "Nothing was deleted. Re-run with `apply_changes: True` to confirm.\n"
+        f"{preview}{suffix}"
+    )
+
+
 def register_business_commands(bot: Any) -> None:
     """Attach separate public/customer/admin groups without consuming the operational group budget."""
     if getattr(bot, "_business_commands_registered", False):
@@ -681,6 +865,26 @@ def register_business_commands(bot: Any) -> None:
             if apply_changes
             else f"Dry-run: {len(preview)} resources would be created or repaired. Re-run with `apply_changes: True` to apply.",
             ephemeral=True,
+        )
+
+    @bot.tree.command(name="setup-reset", description="Owner-only cleanup of legacy ViralForge setup")
+    @app_commands.describe(apply_changes="Delete only previewed legacy ViralForge-managed resources")
+    async def setup_reset(interaction: discord.Interaction, apply_changes: bool = False) -> None:
+        if not is_guild_owner(interaction) or interaction.guild is None:
+            await interaction.response.send_message(
+                "Only the Discord server owner can run setup cleanup.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            actions, changed = await reset_legacy_setup(
+                interaction.guild, apply_changes=apply_changes
+            )
+        except (discord.DiscordException, DiscordBusinessError) as error:
+            await interaction.followup.send(f"Cleanup stopped safely: {error}", ephemeral=True)
+            return
+        await interaction.followup.send(
+            _reset_summary(actions, changed, apply_changes), ephemeral=True
         )
 
     @company.command(name="about", description="What ViralForge is")
@@ -873,6 +1077,27 @@ def register_business_commands(bot: Any) -> None:
             else f"Dry-run: {len(preview)} resources would be created or repaired. Re-run with `apply_changes: True` to apply."
         )
         await interaction.followup.send(message, ephemeral=True)
+
+    @admin.command(name="setup-reset", description="Owner-only cleanup of legacy ViralForge setup")
+    async def admin_setup_reset(
+        interaction: discord.Interaction, apply_changes: bool = False
+    ) -> None:
+        if not is_guild_owner(interaction) or interaction.guild is None:
+            await interaction.response.send_message(
+                "Only the Discord server owner can run setup cleanup.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            actions, changed = await reset_legacy_setup(
+                interaction.guild, apply_changes=apply_changes
+            )
+        except (discord.DiscordException, DiscordBusinessError) as error:
+            await interaction.followup.send(f"Cleanup stopped safely: {error}", ephemeral=True)
+            return
+        await interaction.followup.send(
+            _reset_summary(actions, changed, apply_changes), ephemeral=True
+        )
 
     @admin.command(name="setup-status", description="Owner-only Discord setup status")
     async def setup_status(interaction: discord.Interaction) -> None:

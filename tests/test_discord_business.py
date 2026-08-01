@@ -2,6 +2,7 @@ from pathlib import Path
 
 from sqlalchemy import inspect
 
+from app.discord_business.discord import LEGACY_MANAGED_CHANNEL_NAMES
 from app.discord_business.models import DiscordGuildConfig
 from app.discord_business.service import BusinessRepository, load_config, plan_resources
 
@@ -92,3 +93,11 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
         assert (asset_root / panel["asset"]).is_file()
         assert len(panel.get("fields", [])) <= 4
         assert len(panel.get("actions", [])) <= 5
+
+
+def test_legacy_cleanup_candidates_do_not_overlap_current_channel_names():
+    config = load_config(Path("config/discord"))
+    current_names = {
+        item.name for item in plan_resources(config) if item.resource_type == "channel"
+    }
+    assert not LEGACY_MANAGED_CHANNEL_NAMES & current_names

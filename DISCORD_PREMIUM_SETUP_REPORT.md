@@ -8,6 +8,7 @@
 - Added 15 managed product panels with an eyebrow, concise description, up to four fields, a VF thumbnail, a flat branded wide image, and contextual actions.
 - Added persistent Rules, onboarding, support-ticket, and feature-request interactions. Ticket channels remain private to the requester and configured staff roles.
 - Added the owner-only `/setup` command alongside `/admin setup-server`. Both create or refresh only ViralForge-managed resources, update managed panels, preserve unrelated channels and messages, and do not duplicate known resources.
+- Added `/setup-reset` and `/admin setup-reset`: an owner-confirmed, dry-run-first cleanup for legacy ViralForge-managed resources. It includes old text channels that conflict with replacement forums, but excludes private ticket channels and current setup resources.
 - Added configuration-backed rotating bot presence. Discord bot presences do not support application rich-presence images or buttons; the requested asset keys are retained in `config/discord/branding.yml` for Developer Portal configuration.
 
 ## Brand assets
@@ -43,4 +44,4 @@ After deployment, the server owner should run `/setup apply_changes:true`, then 
 
 - Upload `vf-icon.png` as the Discord server and bot icon if desired.
 - The `viralforge_icon` and `status_online` rich-presence asset keys are documented in configuration for Developer Portal setup. They are not attachable by a Discord bot presence API.
-- Existing legacy setup-managed channels are deliberately retained to avoid deleting history. The new setup does not create them again.
+- Review `/setup-reset` before confirming cleanup. It leaves unrelated server resources and all private ticket channels intact.
