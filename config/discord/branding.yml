@@ -1,0 +1,10 @@
+name: ViralForge
+tagline: "The creator intelligence forge — from source to signal."
+palette:
+  background: "#101217"
+  surface: "#1a1f29"
+  coral: "#ff4d44"
+  blue: "#3ba3ff"
+  text: "#f5f7fa"
+asset_directory: assets/discord/viralforge
+voice: "Competent, confident, technical, helpful, and never hype-first."

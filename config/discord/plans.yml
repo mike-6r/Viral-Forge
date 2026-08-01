@@ -1,0 +1,4 @@
+plans:
+  - {key: community, name: Community, description: "Public learning, updates, and waitlist access.", billing_enabled: false}
+  - {key: creator, name: Creator, description: "Private creator workspace access when provisioned by an operator.", billing_enabled: false}
+  - {key: agency, name: Agency, description: "Multi-brand workspace access when provisioned by an operator.", billing_enabled: false}

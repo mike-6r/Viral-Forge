@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tesserac
 COPY pyproject.toml ./
 COPY app ./app
 COPY config ./config
+COPY assets ./assets
 RUN pip install --no-cache-dir .
 COPY alembic ./alembic
 COPY alembic.ini ./

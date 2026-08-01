@@ -1,0 +1,14 @@
+version: "1.0"
+name: ViralForge
+description: "The creator intelligence forge — from source to signal."
+community_values:
+  - Be useful, factual, and respectful.
+  - Protect source rights, privacy, and reviewer trust.
+  - Keep customer and operator work private.
+categories:
+  - {key: start_here, name: "START HERE", audience: public}
+  - {key: forge_hub, name: "THE FORGE", audience: public}
+  - {key: customer_workspace, name: "CUSTOMER WORKSPACE", audience: customer}
+  - {key: support, name: "SUPPORT", audience: public}
+  - {key: staff_control, name: "STAFF CONTROL", audience: staff}
+  - {key: operator_control, name: "OPERATOR CONTROL", audience: operator}

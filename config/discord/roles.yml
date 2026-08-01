@@ -1,0 +1,20 @@
+roles:
+  - {key: owner, name: Owner, color: "#ff4d44", audience: owner, managed: false}
+  - {key: operator, name: Operator, color: "#ff715b", audience: operator, managed: false}
+  - {key: admin, name: Admin, color: "#e85d75", audience: staff, managed: false}
+  - {key: moderator, name: Moderator, color: "#5d9cec", audience: staff, managed: false}
+  - {key: support, name: Support, color: "#48c78e", audience: staff, managed: false}
+  - {key: community_manager, name: Community Manager, color: "#8b5cf6", audience: staff, managed: false}
+  - {key: builder, name: Builder, color: "#3ba3ff", audience: member, managed: false}
+  - {key: verified_customer, name: Verified Customer, color: "#f6c85f", audience: customer, managed: false}
+  - {key: member, name: Member, color: "#7f8c9a", audience: member, managed: false}
+  - {key: waitlist, name: Waitlist, color: "#57606a", audience: member, managed: false}
+  - {key: early_access, name: Early Access, color: "#fb923c", audience: customer, managed: false}
+  - {key: contributor, name: Contributor, color: "#a855f7", audience: member, managed: false}
+  - {key: partner, name: Partner, color: "#14b8a6", audience: customer, managed: false}
+  - {key: product_updates, name: Product Updates, color: "#60a5fa", audience: notification, managed: false}
+  - {key: community_announcements, name: Community Announcements, color: "#60a5fa", audience: notification, managed: false}
+  - {key: beta_updates, name: Beta Updates, color: "#60a5fa", audience: notification, managed: false}
+  - {key: security_updates, name: Security Updates, color: "#60a5fa", audience: notification, managed: false}
+  - {key: priority_support, name: Priority Support, color: "#f97316", audience: customer, managed: false}
+  - {key: bodycams_daily_hq, name: BodycamsDailyHQ, color: "#dc2626", audience: customer, managed: false}

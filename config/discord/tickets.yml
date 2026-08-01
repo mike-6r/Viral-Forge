@@ -1,0 +1,5 @@
+ticket_types: [account, billing, technical, onboarding, safety, other]
+priority_levels: [normal, priority]
+private_category_key: support
+staff_roles: [owner, admin, moderator, support]
+audit_events: [opened, assigned, closed, reopened]

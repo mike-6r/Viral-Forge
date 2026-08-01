@@ -13,6 +13,7 @@ import app.audit.models  # noqa: F401
 import app.brands.models  # noqa: F401
 import app.content.models  # noqa: F401
 import app.content_packages.models  # noqa: F401
+import app.discord_business.models  # noqa: F401
 import app.discovery.models  # noqa: F401
 import app.ingestion.models  # noqa: F401
 import app.media_preview.models  # noqa: F401
@@ -43,7 +44,9 @@ def check_sqlite_schema(database_path: Path) -> list[str]:
     )
     for table_name in sorted(expected_tables & actual_tables):
         table = Base.metadata.tables[table_name]
-        actual_column_rows = {column["name"]: column for column in inspector.get_columns(table_name)}
+        actual_column_rows = {
+            column["name"]: column for column in inspector.get_columns(table_name)
+        }
         actual_columns = set(actual_column_rows)
         expected_columns = {column.name for column in table.columns}
         differences.extend(
@@ -71,7 +74,10 @@ def check_sqlite_schema(database_path: Path) -> list[str]:
             for foreign_key in inspector.get_foreign_keys(table_name)
         }
         expected_foreign_keys = {
-            (tuple(foreign_key.parent.name for foreign_key in constraint.elements), constraint.referred_table.name)
+            (
+                tuple(foreign_key.parent.name for foreign_key in constraint.elements),
+                constraint.referred_table.name,
+            )
             for constraint in table.foreign_key_constraints
         }
         differences.extend(

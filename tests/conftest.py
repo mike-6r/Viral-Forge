@@ -17,6 +17,7 @@ import app.audit.models  # noqa: F401
 import app.brands.models  # noqa: F401
 import app.content.models  # noqa: F401
 import app.content_packages.models  # noqa: F401
+import app.discord_business.models  # noqa: F401
 import app.ingestion.models  # noqa: F401
 import app.media_preview.models  # noqa: F401
 import app.moderation.models  # noqa: F401

@@ -1,0 +1,46 @@
+channels:
+  - {key: rules, category: start_here, name: rules, kind: text, audience: public, read_only: true}
+  - {key: announcements, category: start_here, name: announcements, kind: text, audience: public, read_only: true}
+  - {key: changelog, category: start_here, name: changelog, kind: text, audience: public, read_only: true}
+  - {key: welcome, category: start_here, name: welcome, kind: text, audience: public, read_only: true}
+  - {key: start_here, category: start_here, name: start-here, kind: text, audience: public, read_only: true}
+  - {key: feature_overview, category: start_here, name: feature-overview, kind: text, audience: public, read_only: true}
+  - {key: plans, category: start_here, name: plans, kind: text, audience: public, read_only: true}
+  - {key: platform_status, category: start_here, name: platform-status, kind: text, audience: public, read_only: true}
+  - {key: general, category: forge_hub, name: general, kind: text, audience: member}
+  - {key: introductions, category: forge_hub, name: introductions, kind: text, audience: member}
+  - {key: showcase, category: forge_hub, name: showcase, kind: text, audience: member}
+  - {key: feedback, category: forge_hub, name: feedback, kind: text, audience: member}
+  - {key: feature_requests, category: forge_hub, name: feature-requests, kind: text, audience: member}
+  - {key: bug_reports, category: forge_hub, name: bug-reports, kind: text, audience: member}
+  - {key: help, category: forge_hub, name: help, kind: text, audience: member}
+  - {key: releases, category: forge_hub, name: releases, kind: text, audience: public, read_only: true}
+  - {key: product_updates, category: forge_hub, name: product-updates, kind: text, audience: public, read_only: true}
+  - {key: community_lounge, category: forge_hub, name: community-lounge, kind: text, audience: member}
+  - {key: resources, category: forge_hub, name: resources, kind: text, audience: member}
+  - {key: customer_lounge, category: customer_workspace, name: customer-lounge, kind: text, audience: customer}
+  - {key: customer_announcements, category: customer_workspace, name: customer-announcements, kind: text, audience: customer, read_only: true}
+  - {key: creator_strategy, category: customer_workspace, name: creator-strategy, kind: text, audience: customer}
+  - {key: creator_resources, category: customer_workspace, name: creator-resources, kind: text, audience: customer}
+  - {key: bodycams_daily_hq, category: customer_workspace, name: bodycams-daily-hq, kind: text, audience: bodycams_daily_hq}
+  - {key: support_desk, category: support, name: support-desk, kind: text, audience: public, read_only: true}
+  - {key: open_a_ticket, category: support, name: open-a-ticket, kind: text, audience: public, read_only: true}
+  - {key: ticket_commands, category: support, name: ticket-commands, kind: text, audience: public, read_only: true}
+  - {key: staff_announcements, category: staff_control, name: staff-announcements, kind: text, audience: staff, read_only: true}
+  - {key: moderation_queue, category: staff_control, name: moderation-queue, kind: text, audience: staff}
+  - {key: support_queue, category: staff_control, name: support-queue, kind: text, audience: staff}
+  - {key: reported_messages, category: staff_control, name: reported-messages, kind: text, audience: staff}
+  - {key: staff_notes, category: staff_control, name: staff-notes, kind: text, audience: staff}
+  - {key: ops_dashboard, category: operator_control, name: ops-dashboard, kind: text, audience: operator, read_only: true}
+  - {key: projects, category: operator_control, name: projects, kind: text, audience: operator}
+  - {key: review_inbox, category: operator_control, name: review-inbox, kind: text, audience: operator}
+  - {key: posting_queue, category: operator_control, name: posting-queue, kind: text, audience: operator}
+  - {key: discovery_queue, category: operator_control, name: discovery-queue, kind: text, audience: operator}
+  - {key: source_review, category: operator_control, name: source-review, kind: text, audience: operator}
+  - {key: media_analysis, category: operator_control, name: media-analysis, kind: text, audience: operator}
+  - {key: clip_candidates, category: operator_control, name: clip-candidates, kind: text, audience: operator}
+  - {key: content_packages, category: operator_control, name: content-packages, kind: text, audience: operator}
+  - {key: publishing_queue, category: operator_control, name: publishing-queue, kind: text, audience: operator}
+  - {key: analytics, category: operator_control, name: analytics, kind: text, audience: operator}
+  - {key: errors, category: operator_control, name: errors, kind: text, audience: operator}
+  - {key: audit_log, category: operator_control, name: audit-log, kind: text, audience: operator}

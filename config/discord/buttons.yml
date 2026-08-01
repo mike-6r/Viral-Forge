@@ -1,0 +1,9 @@
+buttons:
+  accept_rules: {label: "Accept Rules", style: success}
+  start_here: {label: "Start Here", style: primary}
+  view_plans: {label: "View Plans", style: secondary}
+  join_waitlist: {label: "Join Waitlist", style: secondary}
+  open_ticket: {label: "Open Support Ticket", style: primary}
+  get_help: {label: "Get Help", style: secondary}
+  view_docs: {label: "View Docs", style: secondary}
+  system_status: {label: "System Status", style: secondary}

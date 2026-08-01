@@ -1,0 +1,6 @@
+embeds:
+  welcome: {title: "Welcome to ViralForge", description: "Creator intelligence that stays human-controlled. Accept the rules to unlock the community.", color: "#ff4d44", asset: welcome-banner.png}
+  rules: {title: "Community rules", description: "Be respectful. Protect privacy and rights. Never share private customer, source, or operator material. Use support for account help.", color: "#ff4d44"}
+  start_here: {title: "Start here", description: "Choose who you are and what you want to build. Your choices personalize onboarding; they never grant operator access.", color: "#3ba3ff"}
+  support: {title: "Support desk", description: "Open a private ticket for account, billing, onboarding, technical, or safety help. Never paste credentials or private source files here.", color: "#48c78e"}
+  status: {title: "Platform status", description: "Service notices and known issues appear here. Operational dashboards remain private.", color: "#f6c85f"}

@@ -30,6 +30,7 @@ from app.content_packages.service import (
     edit_content_package,
     request_content_package_generation,
 )
+from app.discord_business.discord import register_business_commands
 from app.discovery.models import DiscoveredMedia, DiscoverySource, DiscoveryStatus
 from app.discovery.service import approve_media, reject_media, run_source
 from app.ingestion.storage import LocalFilesystemStorage
@@ -2965,6 +2966,7 @@ class ViralForgeBot(discord.Client):
             except ProductionError:
                 continue
             self.add_view(OpportunityReviewView(opportunity_state, self.repository, self.settings))
+        register_business_commands(self)
         group = self.tree.get_command("viralforge")
         assert isinstance(group, app_commands.Group)
         discovery_group = self.tree.get_command("discovery")

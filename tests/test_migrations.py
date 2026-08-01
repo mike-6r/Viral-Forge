@@ -28,9 +28,9 @@ def test_initial_migration_is_self_contained_and_explicit():
     assert "contentstatus" in source
 
 
-def test_migration_history_has_one_media_preview_head():
+def test_migration_history_has_one_discord_business_head():
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["0021_media_preview"]
+    assert heads == ["0022_discord_business_platform"]
 
 
 def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path):
@@ -45,6 +45,7 @@ def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path)
     }
     assert check_sqlite_schema(database_path) == []
     assert "preview_grants" in inspector.get_table_names()
+    assert "discord_tickets" in inspector.get_table_names()
 
 
 def test_schema_hardening_indexes_nullability_and_foreign_keys(tmp_path: Path):
@@ -70,7 +71,9 @@ def test_schema_hardening_indexes_nullability_and_foreign_keys(tmp_path: Path):
     }
     assert expected_indexes <= actual_indexes
     assert len(actual_indexes) == len(set(actual_indexes))
-    audit_brand = next(column for column in inspector.get_columns("audit_events") if column["name"] == "brand_id")
+    audit_brand = next(
+        column for column in inspector.get_columns("audit_events") if column["name"] == "brand_id"
+    )
     assert audit_brand["nullable"] is False
     selected_source_foreign_keys = {
         tuple(item["constrained_columns"]): item["referred_table"]
