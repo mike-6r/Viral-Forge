@@ -5,14 +5,14 @@
 - Replaced the former broad community/control-plane layout with eight concise categories: Start Here, Platform, Workspaces, Content Ops, Customers, Community, Team, and Private Requests.
 - Added 24 intentional channels, including forum channels for discoveries, case studies, feature requests, and staff customer review.
 - Added professional staff, customer, workspace, and notification roles with restrained forge-themed colors.
-- Added 15 managed product panels with an eyebrow, concise description, up to four fields, a VF thumbnail, a branded wide image, and contextual actions.
+- Added 15 managed product panels with an eyebrow, concise description, up to four fields, a VF thumbnail, a flat branded wide image, and contextual actions.
 - Added persistent Rules, onboarding, support-ticket, and feature-request interactions. Ticket channels remain private to the requester and configured staff roles.
 - Added the owner-only `/setup` command alongside `/admin setup-server`. Both create or refresh only ViralForge-managed resources, update managed panels, preserve unrelated channels and messages, and do not duplicate known resources.
 - Added configuration-backed rotating bot presence. Discord bot presences do not support application rich-presence images or buttons; the requested asset keys are retained in `config/discord/branding.yml` for Developer Portal configuration.
 
 ## Brand assets
 
-Generated and attached original assets:
+Generated and attached original flat SaaS assets:
 
 - Command Center / Welcome
 - How It Works

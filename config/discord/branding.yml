@@ -1,16 +1,20 @@
 name: ViralForge
 tagline: "Content operations for short-form brands."
 palette:
-  background: "#101114"
-  surface: "#1B1D22"
-  coral: "#FF4D2E"
-  ember: "#FF8A3D"
-  text: "#FFFFFF"
-  muted: "#A7ABB4"
+  background: "#0E0F11"
+  surface: "#181A1F"
+  border: "#2A2D34"
+  coral: "#FF4F2E"
+  ember: "#FF7A3D"
+  text: "#F7F7F8"
+  muted: "#A5A8B1"
+  success: "#27C46A"
+  warning: "#F5A524"
+  info: "#5B8CFF"
 asset_directory: assets/discord/viralforge
 icon_asset: vf-icon.png
 footer: "ViralForge | Content Operations Platform"
-voice: "Premium, sharp, trustworthy, concise, and human-approved."
+voice: "Modern, calm, trustworthy, concise, and human-approved."
 presence:
   rotation_seconds: 45
   activities:

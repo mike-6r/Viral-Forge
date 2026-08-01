@@ -15,9 +15,9 @@ All files in this directory are original ViralForge community artwork. They are 
 | `status-banner.png` | `#platform-status` | 2048×682 |
 | `bodycams-daily-hq-thumbnail.png` | private BodycamsDailyHQ surface | 1254×1254 |
 
-## Premium setup assets
+## Current flat SaaS setup assets
 
-The current Discord setup uses the following generated assets. Each is an original raster asset attached to its matching Discord panel; no asset relies on an external URL.
+The current Discord setup uses a flat, quiet SaaS visual system: clean dark space, thin neutral borders, simple line diagrams, and limited red-orange emphasis. Each is an original raster attachment; no asset relies on an external URL.
 
 | Asset | Discord use |
 | --- | --- |

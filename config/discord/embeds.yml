@@ -15,9 +15,13 @@ embeds:
     channel: start_here
     eyebrow: ACCESS + TRUST
     title: ViralForge Standards
-    description: "1. Keep customer files, source access, publishing credentials, and account data private.\n2. Only use approved, authorized, or publicly available sources.\n3. Do not request workflows that bypass platform rules or creator rights.\n4. Keep feedback specific, respectful, and useful.\n5. Use the right support path.\n6. Staff decisions around approvals, access, and publishing are final."
+    description: "ViralForge is built around private customer data, approved sources, and human-controlled decisions. Keep feedback respectful and use the right support path when you need help."
     color: "#FF4D2E"
     asset: platform-standards.png
+    fields:
+      - {name: "Protect access", value: "Keep customer files, source access, credentials, and account data private."}
+      - {name: "Work responsibly", value: "Use approved, authorized, or publicly available sources; never bypass rights or platform rules."}
+      - {name: "Keep decisions clear", value: "Staff approval, access, and publishing decisions are final."}
     actions: [accept_rules, terms, privacy]
   product_overview:
     channel: product_overview
@@ -50,7 +54,7 @@ embeds:
     title: Choose the Right Operating Level
     description: "Access is provisioned by the ViralForge team. Billing is not collected or processed by Discord."
     color: "#FF8A3D"
-    asset: pricing-access.png
+    asset: welcome-command-center.png
     fields:
       - {name: Creator, value: "One brand or a focused content operation."}
       - {name: Professional, value: "Teams managing multiple brands and more review volume."}
