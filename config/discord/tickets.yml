@@ -1,5 +1,5 @@
-ticket_types: [general, workspace_setup, source_setup, publishing_issue, account_access, billing, custom_workflow]
-priority_levels: [normal, priority]
+ticket_types: [general, workspace_setup, source_setup, publishing_issue, account_access, billing, custom_workflow, bug_report, feature_request]
+priority_levels: [low, normal, high, urgent, critical]
 private_category_key: private_requests
 staff_roles: [owner, administrator, operations_lead, customer_success, support_team]
 audit_events: [opened, assigned, closed, reopened]

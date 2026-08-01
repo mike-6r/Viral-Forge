@@ -9,13 +9,13 @@ channels:
   - {key: sources, category: workspaces, name: sources, kind: text, audience: member, read_only: true}
   - {key: review_queue, category: workspaces, name: review-queue, kind: text, audience: member, read_only: true}
   - {key: publishing_flow, category: workspaces, name: publishing-flow, kind: text, audience: member, read_only: true}
-  - {key: discoveries, category: content_ops, name: discoveries, kind: forum, audience: member, read_only: false, tags: [Source, Review, Approved]}
+  - {key: discoveries, category: content_ops, name: discoveries, kind: forum, audience: member, read_only: false, tags: [Source, "Clip Idea", Trend, Review, Approved]}
   - {key: caption_lab, category: content_ops, name: caption-lab, kind: text, audience: member, read_only: false}
   - {key: analytics, category: content_ops, name: analytics, kind: text, audience: member, read_only: true}
-  - {key: case_studies, category: content_ops, name: case-studies, kind: forum, audience: member, read_only: false, tags: [Creator, Agency, Education, Local Business]}
+  - {key: case_studies, category: content_ops, name: case-studies, kind: forum, audience: member, read_only: false, tags: [Creator, Agency, Media, Business, Example]}
   - {key: onboarding, category: customers, name: onboarding, kind: text, audience: member, read_only: true}
   - {key: support, category: customers, name: support, kind: text, audience: member, read_only: true}
-  - {key: feature_requests, category: customers, name: feature-requests, kind: forum, audience: member, read_only: false, tags: [Feature, Integration, Workflow, Bug, "Quality of Life", Planned, "In Review"]}
+  - {key: feature_requests, category: customers, name: feature-requests, kind: forum, audience: member, read_only: false, tags: [Feature, Integration, Workflow, Bug, "Quality of Life", "In Review", Planned]}
   - {key: general, category: community, name: general, kind: text, audience: member, read_only: false}
   - {key: creator_talk, category: community, name: creator-talk, kind: text, audience: member, read_only: false}
   - {key: wins, category: community, name: wins, kind: text, audience: member, read_only: false}

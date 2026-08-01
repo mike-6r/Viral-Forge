@@ -1088,7 +1088,7 @@ def register_business_commands(bot: Any) -> None:
         priority="Normal or priority",
     )
     async def support_open(
-        interaction: discord.Interaction, ticket_type: str = "account", priority: str = "normal"
+        interaction: discord.Interaction, ticket_type: str = "general", priority: str = "normal"
     ) -> None:
         config = load_config()
         if (
@@ -1602,6 +1602,12 @@ def register_business_commands(bot: Any) -> None:
             return
         session, repo = _session(), BusinessRepository()
         try:
+            if role_key not in set(load_config()["role_panels"].get("temporary_role_keys", [])):
+                await interaction.response.send_message(
+                    "Only configured temporary-access roles may be granted by this command.",
+                    ephemeral=True,
+                )
+                return
             role = _role_by_key(session, repo, member.guild, role_key)
             bot_member = member.guild.me
             if role is None or bot_member is None or role >= bot_member.top_role:

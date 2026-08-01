@@ -14,6 +14,7 @@ def test_discord_business_configuration_is_complete_and_plans_premium_control_pl
     assert {
         ("role", "owner"),
         ("role", "operations_lead"),
+        ("role", "verified_customer"),
         ("role", "customer"),
         ("channel", "start_here"),
         ("channel", "team_dashboard"),
@@ -32,8 +33,8 @@ def test_discord_business_configuration_is_complete_and_plans_premium_control_pl
         "Workflow",
         "Bug",
         "Quality of Life",
-        "Planned",
         "In Review",
+        "Planned",
     )
 
 
@@ -119,3 +120,23 @@ def test_rules_acceptance_gates_member_areas_but_not_start_here():
             assert channel["audience"] == "public"
         elif channel["category"] not in {"team", "private_requests"}:
             assert channel["audience"] == "member"
+
+
+def test_discord_premium_role_and_forum_boundaries_are_configured():
+    config = load_config(Path("config/discord"))
+    names = {item["key"] for item in config["roles"]["roles"]}
+    assert {"member", "verified_customer", "customer", "trial_user"} <= names
+    self_service = {
+        *config["role_panels"]["panels"]["notifications"],
+        *config["role_panels"]["panels"]["interests"],
+    }
+    assert self_service == {
+        "product_updates",
+        "processing_alerts",
+        "feature_releases",
+        "community_events",
+    }
+    channels = {item["key"]: item for item in config["channels"]["channels"]}
+    assert channels["discoveries"]["tags"] == ["Source", "Clip Idea", "Trend", "Review", "Approved"]
+    assert channels["case_studies"]["tags"] == ["Creator", "Agency", "Media", "Business", "Example"]
+    assert set(config["tickets"]["ticket_types"]) >= {"general", "bug_report", "feature_request"}

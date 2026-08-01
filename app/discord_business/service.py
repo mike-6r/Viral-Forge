@@ -301,7 +301,7 @@ def audience_role_keys(audience: str) -> set[str]:
     return {
         "public": set(),
         "member": {"member"},
-        "customer": {"customer"},
+        "customer": {"verified_customer", "customer"},
         "staff": {
             "owner",
             "administrator",

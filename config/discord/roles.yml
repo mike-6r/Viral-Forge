@@ -6,6 +6,7 @@ roles:
   - {key: customer_success, name: Customer Success, color: "#A56A57", audience: staff, managed: false}
   - {key: support_team, name: Support Team, color: "#7B6D68", audience: staff, managed: false}
   - {key: developer, name: Developer, color: "#8A6DAA", audience: staff, managed: false}
+  - {key: verified_customer, name: Verified Customer, color: "#D5A27C", audience: customer, managed: false}
   - {key: customer, name: Customer, color: "#D5A27C", audience: customer, managed: false}
   - {key: creator, name: Creator, color: "#9D8B80", audience: customer, managed: false}
   - {key: agency, name: Agency, color: "#B9835C", audience: customer, managed: false}
