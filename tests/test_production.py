@@ -1,12 +1,15 @@
+import asyncio
 import json
 import subprocess
 import uuid
 from pathlib import Path
 
+import httpx
 import pytest
 from sqlalchemy import select
 
 from app.audit.models import AuditEvent
+from app.common.config import Settings
 from app.production.models import PostingQueueItem, ProductionClip
 from app.production.service import (
     ProductionError,
@@ -16,6 +19,7 @@ from app.production.service import (
     probe_video,
     youtube_video_id,
 )
+from app.production.youtube import resolve_youtube_channel, youtube_channel_reference
 from tests.conftest import DEV_ACTOR_ID
 
 
@@ -29,6 +33,61 @@ def test_youtube_url_segments_and_vertical_command(tmp_path):
     )
     with pytest.raises(ProductionError):
         youtube_video_id("https://example.test/video")
+
+
+def test_youtube_channel_reference_accepts_only_public_channel_forms():
+    assert youtube_channel_reference("https://www.youtube.com/channel/UC123") == ("id", "UC123")
+    assert youtube_channel_reference("https://youtube.com/@PhoenixPolice") == (
+        "handle",
+        "PhoenixPolice",
+    )
+    assert youtube_channel_reference("@PhoenixPolice") == ("handle", "PhoenixPolice")
+    with pytest.raises(ProductionError, match="channel URL"):
+        youtube_channel_reference("https://example.test/channel")
+    with pytest.raises(ProductionError, match="channel URL"):
+        youtube_channel_reference("https://example.test/channel/UC123")
+
+
+def test_resolve_youtube_channel_uses_only_official_api_metadata():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/channels"):
+            assert request.url.params["forHandle"] == "PhoenixPolice"
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "UCofficial",
+                            "snippet": {
+                                "title": "Phoenix Police",
+                                "thumbnails": {"medium": {"url": "https://example.test/channel.jpg"}},
+                            },
+                            "statistics": {"videoCount": "42"},
+                        }
+                    ]
+                },
+            )
+        if request.url.path.endswith("/search"):
+            assert request.url.params["channelId"] == "UCofficial"
+            return httpx.Response(200, json={"items": [{"id": {"videoId": "latest"}}]})
+        if request.url.path.endswith("/videos"):
+            return httpx.Response(
+                200,
+                json={"items": [{"id": "latest", "snippet": {"title": "Latest public upload"}}]},
+            )
+        raise AssertionError(f"unexpected endpoint: {request.url}")
+
+    async def resolve() -> object:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await resolve_youtube_channel(
+                "@PhoenixPolice", Settings(youtube_api_key="test-key"), client
+            )
+
+    channel = asyncio.run(resolve())
+    assert channel.channel_id == "UCofficial"
+    assert channel.title == "Phoenix Police"
+    assert channel.video_count == 42
+    assert channel.latest_upload_title == "Latest public upload"
 
 
 def test_probe_and_approval_queue(session, tmp_path):  # type: ignore[no-untyped-def]

@@ -9,6 +9,10 @@ from app.content_packages.models import ContentPackage
 from app.discord_bot import (
     ClipReviewView,
     ContentPackageReviewView,
+    ContentReadySetupView,
+    DiscoveryRepository,
+    DiscoverySetupView,
+    OperatorAccessHelpView,
     OperatorHomeView,
     OpportunityReviewState,
     ProductionRepository,
@@ -171,6 +175,44 @@ def test_control_center_summarizes_persisted_workflow(session: Session, monkeypa
         "Review",
         "Ready To Post",
         "More",
+    ]
+
+
+def test_discovery_setup_wizard_has_a_supported_path_and_safe_alternatives():
+    view = DiscoverySetupView(
+        repository=DiscoveryRepository(Settings()),
+        settings=Settings(),
+        brand_name="BodycamsDailyHQ",
+    )
+    select = next(child for child in view.children if hasattr(child, "options"))
+    assert [option.label for option in select.options] == [
+        "YouTube Channel",
+        "YouTube Playlist",
+        "RSS Feed",
+        "Website",
+        "Manual Import",
+        "Import Template",
+    ]
+    assert [child.label for child in view.children if hasattr(child, "label")] == [
+        "Continue",
+        "Help",
+        "Back",
+    ]
+
+
+def test_guided_empty_state_views_keep_an_actionable_next_step():
+    settings = Settings(discord_allowed_role_ids="123")
+    access = OperatorAccessHelpView(settings)
+    publishing = ContentReadySetupView(ProductionRepository(settings), settings)
+    assert [child.label for child in access.children] == [
+        "View Required Roles",
+        "Contact Administrator",
+        "Back",
+    ]
+    assert [child.label for child in publishing.children] == [
+        "Set Up YouTube",
+        "Find Videos",
+        "Back",
     ]
 
 

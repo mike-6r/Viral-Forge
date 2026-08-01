@@ -21,6 +21,7 @@ from app.accounts.models import Role, RoleName, User, UserRole
 from app.analysis.models import AnalysisEvent, AnalysisSegment, TranscriptSegment, VideoAnalysis
 from app.analysis.service import request_analysis
 from app.analytics.service import dashboard as analytics_dashboard
+from app.audit.models import AuditEvent
 from app.brands.models import Brand, BrandMembership
 from app.brands.service import ensure_legacy_brand, set_default_brand
 from app.common.config import Settings, get_settings
@@ -39,7 +40,7 @@ from app.discord_business.discord import (
 )
 from app.discord_business.operations import OperationsRepository, scan_message
 from app.discord_business.service import BusinessRepository, load_config
-from app.discovery.models import DiscoveredMedia, DiscoverySource, DiscoveryStatus
+from app.discovery.models import DiscoveredMedia, DiscoveryRun, DiscoverySource, DiscoveryStatus
 from app.discovery.service import approve_media, reject_media, run_source
 from app.ingestion.storage import LocalFilesystemStorage
 from app.media_preview.service import IssuedPreview, PreviewError, issue_preview
@@ -73,6 +74,7 @@ from app.production.service import (
     reject_source,
     set_caption,
 )
+from app.production.youtube import YouTubeChannel, resolve_youtube_channel
 from app.publishing.models import PublishRequest
 from app.publishing.service import PublishingError, cancel_publish, confirm_publish
 
@@ -1116,6 +1118,54 @@ class ProductionRepository:
 
 
 class DiscoveryRepository(ProductionRepository):
+    def preview_youtube_channel(self, reference: str) -> YouTubeChannel:
+        return asyncio.run(resolve_youtube_channel(reference, self.settings))
+
+    def enable_youtube_channel(self, channel: YouTubeChannel) -> DiscoverySource:
+        """Persist one explicitly validated public YouTube channel for the active brand."""
+        session = next(self._session())
+        try:
+            actor = self._actor(session)
+            brand = self._default_brand_in_session(session)
+            existing = session.scalar(
+                select(DiscoverySource).where(
+                    DiscoverySource.brand_id == brand.id,
+                    DiscoverySource.provider == "YOUTUBE",
+                    DiscoverySource.account_identifier == channel.channel_id,
+                )
+            )
+            if existing is not None:
+                return existing
+            source = DiscoverySource(
+                brand_id=brand.id,
+                name=channel.title,
+                provider="YOUTUBE",
+                source_type="CHANNEL",
+                platform="YOUTUBE",
+                account_identifier=channel.channel_id,
+                public_url=channel.url,
+                enabled=True,
+                trusted=False,
+                polling_interval_seconds=self.settings.discovery_default_polling_interval_seconds,
+                configuration_json={"channel_id": channel.channel_id, "result_limit": 20},
+            )
+            session.add(source)
+            session.flush()
+            session.add(
+                AuditEvent(
+                    actor_id=actor,
+                    entity_type="discovery_source",
+                    entity_id=source.id,
+                    brand_id=source.brand_id,
+                    event_name="discovery.source.created_from_discord",
+                    payload={"provider": "YOUTUBE", "channel_id": channel.channel_id},
+                )
+            )
+            session.commit()
+            return source
+        finally:
+            session.close()
+
     def media(self, media_id: uuid.UUID) -> DiscoveredMedia:
         session = next(self._session())
         try:
@@ -1163,7 +1213,7 @@ class DiscoveryRepository(ProductionRepository):
         finally:
             session.close()
 
-    def run(self, source_id: uuid.UUID) -> object:
+    def run(self, source_id: uuid.UUID) -> DiscoveryRun:
         session = next(self._session())
         try:
             source = session.get(DiscoverySource, source_id)
@@ -1220,9 +1270,52 @@ def user_error(error: ProductionError | PublishingError | str) -> str:
 
 def unauthorized_message() -> str:
     return (
-        "You are not authorized to operate ViralForge. "
-        "Ask a server owner to assign one of the configured ViralForge roles, then retry."
+        "**You don't currently have the Operator role.**\n"
+        "Choose an option below to see what is required or contact a server administrator."
     )
+
+
+class OperatorAccessHelpView(discord.ui.View):
+    """A safe, actionable permission response; this never grants a role itself."""
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(timeout=300)
+        self.settings = settings
+
+    @discord.ui.button(label="View Required Roles", style=discord.ButtonStyle.primary)
+    async def required_roles(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorAccessHelpView"]
+    ) -> None:
+        configured_roles = configured_role_ids(self.settings)
+        role_summary = (
+            ", ".join(f"<@&{role_id}>" for role_id in configured_roles)
+            if configured_roles
+            else "No operator roles have been configured yet."
+        )
+        await interaction.response.send_message(
+            "**Required access**\n"
+            f"A server owner must assign one of these configured roles: {role_summary}\n"
+            "Ask an administrator to assign it, then use `/home` again.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Contact Administrator", style=discord.ButtonStyle.secondary)
+    async def contact_administrator(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorAccessHelpView"]
+    ) -> None:
+        await interaction.response.send_message(
+            "Ask a server owner to assign the required ViralForge Operator role. "
+            "ViralForge cannot grant roles automatically, which keeps workspace access protected.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorAccessHelpView"]
+    ) -> None:
+        await interaction.response.edit_message(
+            content="Return to `/home` after an administrator has updated your role.", view=None
+        )
 
 
 def lifecycle_next_action(state: DashboardState) -> str:
@@ -1426,7 +1519,9 @@ class ProjectDashboardView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -1694,7 +1789,9 @@ class AnalysisTextView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -1844,7 +1941,9 @@ class CandidateReviewView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -2055,7 +2154,9 @@ class ContentPackageReviewView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -2145,7 +2246,9 @@ class OpportunityReviewView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -2269,7 +2372,9 @@ class ClipReviewView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -2469,7 +2574,9 @@ class PublishConfirmationView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -2549,7 +2656,9 @@ class DiscoveryReviewView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -2732,7 +2841,9 @@ class BrandSelectionView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -2787,7 +2898,9 @@ class ProjectListView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -2818,7 +2931,9 @@ class ControlCenterView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -3040,7 +3155,9 @@ class GuidedProjectView(discord.ui.View):
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
             interaction.user, self.settings
         ):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -3156,17 +3273,376 @@ class AddVideoModal(discord.ui.Modal, title="Add a video"):
         self.repository, self.settings = repository, settings
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        url = str(self.url).strip()
+        if not url.startswith(("https://", "http://")):
+            await interaction.response.send_message(
+                "Add a complete public video URL beginning with https://, then try again.",
+                view=RetryManualVideoView(self.repository, self.settings),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            embed=manual_video_confirmation_embed(url),
+            view=ManualVideoConfirmationView(url, self.repository, self.settings),
+            ephemeral=True,
+        )
+
+
+def manual_video_confirmation_embed(url: str) -> discord.Embed:
+    embed = discord.Embed(title="Confirm video", description="One short check before ViralForge begins processing.")
+    embed.add_field(name="Video", value=url[:1024], inline=False)
+    embed.add_field(
+        name="Rights reminder",
+        value="Use only approved, authorized, or public sources you are permitted to process.",
+        inline=False,
+    )
+    embed.add_field(
+        name="What happens next",
+        value="ViralForge will resolve the source, then wait for your source approval before downloading.",
+        inline=False,
+    )
+    return embed
+
+
+class RetryManualVideoView(discord.ui.View):
+    def __init__(self, repository: ProductionRepository, settings: Settings) -> None:
+        super().__init__(timeout=300)
+        self.repository, self.settings = repository, settings
+
+    @discord.ui.button(label="Try Again", style=discord.ButtonStyle.primary)
+    async def retry(self, interaction: discord.Interaction, _: discord.ui.Button["RetryManualVideoView"]) -> None:
+        await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
+
+
+class ManualVideoConfirmationView(discord.ui.View):
+    def __init__(self, url: str, repository: ProductionRepository, settings: Settings) -> None:
+        super().__init__(timeout=600)
+        self.url, self.repository, self.settings = url, repository, settings
+
+    @discord.ui.button(label="Create Project", style=discord.ButtonStyle.success)
+    async def create(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ManualVideoConfirmationView"]
+    ) -> None:
         try:
-            project = await asyncio.to_thread(self.repository.create_project, str(self.url))
+            project = await asyncio.to_thread(self.repository.create_project, self.url)
             state = await asyncio.to_thread(self.repository.dashboard, project.id)
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.send_message(
-            "Video added. Review it once, then ViralForge will prepare it automatically.",
+        await interaction.response.edit_message(
+            content="Video added. Review it once, then ViralForge will prepare it automatically.",
             embed=guided_project_embed(state),
             view=GuidedProjectView(project.id, self.repository, self.settings),
+        )
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, _: discord.ui.Button["ManualVideoConfirmationView"]) -> None:
+        await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
+
+
+def discovery_setup_embed(brand_name: str, selected: str = "YOUTUBE_CHANNEL") -> discord.Embed:
+    embed = discord.Embed(
+        title="Discovery setup",
+        description=(
+            f"**{brand_name}** has no approved discovery sources yet. "
+            "Choose where ViralForge should look for public videos."
+        ),
+    )
+    embed.add_field(name="1. Choose a source", value="YouTube Channel is ready to connect today.", inline=False)
+    embed.add_field(
+        name="2. Add the public reference",
+        value="Paste an official YouTube channel URL, @handle, or channel ID.",
+        inline=False,
+    )
+    embed.add_field(
+        name="3. Confirm and scan",
+        value=f"Selected: {selected.replace('_', ' ').title()}",
+        inline=False,
+    )
+    embed.set_footer(text="Setup takes about one minute. You can change sources later.")
+    return embed
+
+
+class DiscoveryTypeSelect(discord.ui.Select["DiscoverySetupView"]):
+    def __init__(self) -> None:
+        super().__init__(
+            placeholder="Where should ViralForge search?",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(label="YouTube Channel", value="YOUTUBE_CHANNEL", description="Available now"),
+                discord.SelectOption(label="YouTube Playlist", value="YOUTUBE_PLAYLIST", description="Coming soon"),
+                discord.SelectOption(label="RSS Feed", value="RSS", description="Coming soon in Discord"),
+                discord.SelectOption(label="Website", value="WEBPAGE", description="Coming soon"),
+                discord.SelectOption(label="Manual Import", value="MANUAL", description="Add one video now"),
+                discord.SelectOption(label="Import Template", value="TEMPLATE", description="Coming soon"),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        view = self.view
+        assert isinstance(view, DiscoverySetupView)
+        view.source_kind = self.values[0]
+        await interaction.response.edit_message(
+            embed=discovery_setup_embed(view.brand_name, view.source_kind), view=view
+        )
+
+
+class DiscoverySetupView(discord.ui.View):
+    def __init__(self, repository: DiscoveryRepository, settings: Settings, brand_name: str) -> None:
+        super().__init__(timeout=600)
+        self.repository, self.settings, self.brand_name = repository, settings, brand_name
+        self.source_kind = "YOUTUBE_CHANNEL"
+        self.add_item(DiscoveryTypeSelect())
+
+    @discord.ui.button(label="Continue", style=discord.ButtonStyle.success)
+    async def continue_setup(
+        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoverySetupView"]
+    ) -> None:
+        if self.source_kind == "YOUTUBE_CHANNEL":
+            await interaction.response.send_modal(YouTubeChannelModal(self.repository, self.settings))
+            return
+        if self.source_kind == "MANUAL":
+            await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
+            return
+        await interaction.response.send_message(
+            f"**{self.source_kind.replace('_', ' ').title()} is coming soon.**\n"
+            "You can add a YouTube Channel now, or add one video manually.",
+            view=ComingSoonSetupView(self.repository, self.settings, self.brand_name),
             ephemeral=True,
+        )
+
+    @discord.ui.button(label="Help", style=discord.ButtonStyle.secondary)
+    async def help(
+        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoverySetupView"]
+    ) -> None:
+        await interaction.response.send_message(
+            "Discovery checks only public sources you explicitly configure. ViralForge never uses browser automation, cookies, or private accounts. A YouTube channel takes about one minute to add.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back(
+        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoverySetupView"]
+    ) -> None:
+        state = await asyncio.to_thread(self.repository.control_center)
+        await interaction.response.edit_message(
+            embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
+        )
+
+
+class ComingSoonSetupView(discord.ui.View):
+    def __init__(self, repository: DiscoveryRepository, settings: Settings, brand_name: str) -> None:
+        super().__init__(timeout=300)
+        self.repository, self.settings, self.brand_name = repository, settings, brand_name
+
+    @discord.ui.button(label="Set Up YouTube", style=discord.ButtonStyle.primary)
+    async def youtube(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ComingSoonSetupView"]
+    ) -> None:
+        await interaction.response.edit_message(
+            embed=discovery_setup_embed(self.brand_name),
+            view=DiscoverySetupView(self.repository, self.settings, self.brand_name),
+        )
+
+    @discord.ui.button(label="Add Video Instead", style=discord.ButtonStyle.secondary)
+    async def manual(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ComingSoonSetupView"]
+    ) -> None:
+        await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
+
+
+class YouTubeChannelModal(discord.ui.Modal, title="Add a YouTube channel"):
+    reference: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
+        label="Channel URL, @handle, or channel ID",
+        placeholder="https://youtube.com/@PhoenixPolice",
+        max_length=2048,
+    )
+
+    def __init__(self, repository: DiscoveryRepository, settings: Settings) -> None:
+        super().__init__()
+        self.repository, self.settings = repository, settings
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            channel = await asyncio.to_thread(self.repository.preview_youtube_channel, str(self.reference))
+        except ProductionError:
+            await interaction.response.send_message(
+                "We could not validate that public YouTube channel yet. Check the URL or handle and try again.",
+                view=RetryDiscoverySetupView(self.repository, self.settings),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            embed=youtube_channel_confirmation_embed(channel),
+            view=DiscoverySourceConfirmationView(channel, self.repository, self.settings),
+            ephemeral=True,
+        )
+
+
+def youtube_channel_confirmation_embed(channel: YouTubeChannel) -> discord.Embed:
+    embed = discord.Embed(title="Confirm discovery source", description="We found this public YouTube channel.")
+    embed.add_field(name="Channel", value=channel.title, inline=True)
+    embed.add_field(name="Videos", value=str(channel.video_count) if channel.video_count is not None else "Unavailable", inline=True)
+    embed.add_field(name="Latest upload", value=channel.latest_upload_title or "No recent upload found", inline=False)
+    embed.add_field(name="Status", value="Ready to enable", inline=True)
+    if channel.thumbnail_url:
+        embed.set_thumbnail(url=channel.thumbnail_url)
+    return embed
+
+
+class RetryDiscoverySetupView(discord.ui.View):
+    def __init__(self, repository: DiscoveryRepository, settings: Settings) -> None:
+        super().__init__(timeout=300)
+        self.repository, self.settings = repository, settings
+
+    @discord.ui.button(label="Try Again", style=discord.ButtonStyle.primary)
+    async def retry(self, interaction: discord.Interaction, _: discord.ui.Button["RetryDiscoverySetupView"]) -> None:
+        await interaction.response.send_modal(YouTubeChannelModal(self.repository, self.settings))
+
+    @discord.ui.button(label="Add Video Instead", style=discord.ButtonStyle.secondary)
+    async def manual(self, interaction: discord.Interaction, _: discord.ui.Button["RetryDiscoverySetupView"]) -> None:
+        await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
+
+
+class DiscoverySourceConfirmationView(discord.ui.View):
+    def __init__(self, channel: YouTubeChannel, repository: DiscoveryRepository, settings: Settings) -> None:
+        super().__init__(timeout=600)
+        self.channel, self.repository, self.settings = channel, repository, settings
+
+    @discord.ui.button(label="Enable Source", style=discord.ButtonStyle.success)
+    async def enable(
+        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoverySourceConfirmationView"]
+    ) -> None:
+        try:
+            source = await asyncio.to_thread(self.repository.enable_youtube_channel, self.channel)
+        except ProductionError:
+            await interaction.response.send_message(
+                "We could not enable that source yet. Try the validation again or add a video manually.",
+                view=RetryDiscoverySetupView(self.repository, self.settings),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.edit_message(
+            content="Discovery source enabled. You can scan it now or return home.",
+            embed=youtube_channel_confirmation_embed(self.channel),
+            view=DiscoveryRunNowView(source, self.repository, self.settings),
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+    async def cancel(
+        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoverySourceConfirmationView"]
+    ) -> None:
+        state = await asyncio.to_thread(self.repository.control_center)
+        await interaction.response.edit_message(
+            embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
+        )
+
+
+class DiscoveryRunNowView(discord.ui.View):
+    def __init__(self, source: DiscoverySource, repository: DiscoveryRepository, settings: Settings) -> None:
+        super().__init__(timeout=600)
+        self.source, self.repository, self.settings = source, repository, settings
+
+    @discord.ui.button(label="Run Discovery Now", style=discord.ButtonStyle.primary)
+    async def run_now(
+        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoveryRunNowView"]
+    ) -> None:
+        await interaction.response.defer(thinking=True)
+        try:
+            run = await asyncio.to_thread(self.repository.run, self.source.id)
+        except ProductionError:
+            await interaction.edit_original_response(
+                content="The scan could not start yet. Check the source and try again; nothing was changed.",
+                view=RetryDiscoverySetupView(self.repository, self.settings),
+            )
+            return
+        if getattr(run, "status", "FAILED") != "SUCCEEDED":
+            await interaction.edit_original_response(
+                content="The scan could not finish yet. Check the source and try again; nothing was changed.",
+                view=RetryDiscoverySetupView(self.repository, self.settings),
+            )
+            return
+        await interaction.edit_original_response(
+            content=(
+                f"Found {run.new_count} new video{'s' if run.new_count != 1 else ''}. "
+                f"{run.duplicate_count} duplicate{'s were' if run.duplicate_count != 1 else ' was'} safely skipped."
+            ),
+            view=ReviewFoundVideosView(self.repository, self.settings),
+        )
+
+    @discord.ui.button(label="Back Home", style=discord.ButtonStyle.secondary)
+    async def home(self, interaction: discord.Interaction, _: discord.ui.Button["DiscoveryRunNowView"]) -> None:
+        state = await asyncio.to_thread(self.repository.control_center)
+        await interaction.response.edit_message(
+            embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
+        )
+
+
+class ReviewFoundVideosView(discord.ui.View):
+    def __init__(self, repository: DiscoveryRepository, settings: Settings) -> None:
+        super().__init__(timeout=300)
+        self.repository, self.settings = repository, settings
+
+    @discord.ui.button(label="Review Videos", style=discord.ButtonStyle.success)
+    async def review(self, interaction: discord.Interaction, _: discord.ui.Button["ReviewFoundVideosView"]) -> None:
+        items = await asyncio.to_thread(self.repository.discovery_queue)
+        if not items:
+            await interaction.response.send_message(
+                "The scan finished, but no videos matched this brand's review rules. Add a video manually or adjust the source later.",
+                view=RetryDiscoverySetupView(self.repository, self.settings),
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message(
+            embed=discovery_embed(items[0]),
+            view=DiscoveryReviewView(items[0], self.repository, self.settings),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Return Home", style=discord.ButtonStyle.secondary)
+    async def home(self, interaction: discord.Interaction, _: discord.ui.Button["ReviewFoundVideosView"]) -> None:
+        state = await asyncio.to_thread(self.repository.control_center)
+        await interaction.response.edit_message(
+            embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
+        )
+
+
+class ContentReadySetupView(discord.ui.View):
+    """Guidance boundary for publishing setup; credentials never enter Discord."""
+    def __init__(self, repository: ProductionRepository, settings: Settings) -> None:
+        super().__init__(timeout=300)
+        self.repository, self.settings = repository, settings
+
+    @discord.ui.button(label="Set Up YouTube", style=discord.ButtonStyle.primary)
+    async def youtube(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]
+    ) -> None:
+        await interaction.response.send_message(
+            "**Connect a YouTube account**\n"
+            "An administrator must finish the secure OAuth setup and store only the credential reference outside Discord. "
+            "ViralForge will never ask for a token, password, or cookie here. TikTok, Instagram, Facebook, and X are coming soon.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Find Videos", style=discord.ButtonStyle.secondary)
+    async def find(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]
+    ) -> None:
+        state = await asyncio.to_thread(self.repository.control_center)
+        await interaction.response.send_message(
+            embed=discovery_setup_embed(state.active_brand_name),
+            view=DiscoverySetupView(
+                DiscoveryRepository(self.settings), self.settings, state.active_brand_name
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]) -> None:
+        state = await asyncio.to_thread(self.repository.control_center)
+        await interaction.response.edit_message(
+            embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
         )
 
 
@@ -3178,7 +3654,9 @@ class OperatorHomeView(discord.ui.View):
 
     async def _authorized(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
-            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
@@ -3196,9 +3674,24 @@ class OperatorHomeView(discord.ui.View):
         if clip is not None:
             await interaction.response.send_message(embed=clip_embed(clip.clip, clip.total), view=ClipReviewView(clip, self.repository, self.settings), ephemeral=True)
             return
-        items = await asyncio.to_thread(DiscoveryRepository(self.settings).discovery_queue)
+        home_state = await asyncio.to_thread(self.repository.control_center)
+        discovery_repository = DiscoveryRepository(self.settings)
+        if not home_state.discovery_source_count:
+            await interaction.response.send_message(
+                embed=discovery_setup_embed(home_state.active_brand_name),
+                view=DiscoverySetupView(
+                    discovery_repository, self.settings, home_state.active_brand_name
+                ),
+                ephemeral=True,
+            )
+            return
+        items = await asyncio.to_thread(discovery_repository.discovery_queue)
         if items:
-            await interaction.response.send_message(embed=discovery_embed(items[0]), view=DiscoveryReviewView(items[0], DiscoveryRepository(self.settings), self.settings), ephemeral=True)
+            await interaction.response.send_message(
+                embed=discovery_embed(items[0]),
+                view=DiscoveryReviewView(items[0], discovery_repository, self.settings),
+                ephemeral=True,
+            )
             return
         queue = await asyncio.to_thread(self.repository.queue)
         if queue:
@@ -3224,7 +3717,10 @@ class OperatorHomeView(discord.ui.View):
         state = await asyncio.to_thread(self.repository.control_center)
         if not state.discovery_source_count:
             await interaction.response.send_message(
-                f"No approved discovery sources have been configured for {state.active_brand_name}. Add a source from More before running discovery.",
+                embed=discovery_setup_embed(state.active_brand_name),
+                view=DiscoverySetupView(
+                    DiscoveryRepository(self.settings), self.settings, state.active_brand_name
+                ),
                 ephemeral=True,
             )
             return
@@ -3250,7 +3746,12 @@ class OperatorHomeView(discord.ui.View):
     async def ready_to_post(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
         if not await self._authorized(interaction):
             return
-        await interaction.response.send_message(embed=ready_to_post_embed(await asyncio.to_thread(self.repository.queue), self.settings), ephemeral=True)
+        items = await asyncio.to_thread(self.repository.queue)
+        await interaction.response.send_message(
+            embed=ready_to_post_embed(items, self.settings),
+            view=ContentReadySetupView(self.repository, self.settings),
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="More", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:more")
     async def more(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
@@ -3352,7 +3853,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             await interaction.response.send_message(
                 f"discovery: {'enabled' if self.settings.discovery_enabled else 'disabled'}\nscheduler: {'enabled' if self.settings.discovery_scheduler_enabled else 'disabled'}",
@@ -3364,7 +3867,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             items = await asyncio.to_thread(self.discovery_repository.discovery_queue)
             if not items:
@@ -3385,7 +3890,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             try:
                 media = await asyncio.to_thread(
@@ -3406,7 +3913,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             try:
                 media = await asyncio.to_thread(
@@ -3427,7 +3936,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             try:
                 project = await asyncio.to_thread(self.repository.create_project, url)
@@ -3462,7 +3973,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             try:
                 state = await asyncio.to_thread(self.repository.dashboard, uuid.UUID(project_id))
@@ -3480,7 +3993,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             state = await asyncio.to_thread(self.repository.control_center)
             await interaction.response.send_message(
@@ -3492,7 +4007,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             state = await asyncio.to_thread(self.repository.control_center)
             await interaction.response.send_message(
@@ -3505,7 +4022,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             source_review = await asyncio.to_thread(
                 self.repository.projects, "SOURCE_REVIEW_REQUIRED"
@@ -3551,7 +4070,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             projects = await asyncio.to_thread(self.repository.projects)
             await interaction.response.send_message(
@@ -3567,7 +4088,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             brands = await asyncio.to_thread(self.repository.brands)
             active = await asyncio.to_thread(self.repository.default_brand)
@@ -3589,7 +4112,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             items = await asyncio.to_thread(self.repository.queue)
             await interaction.response.send_message(
@@ -3612,7 +4137,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             try:
                 request = await asyncio.to_thread(
@@ -3652,7 +4179,9 @@ class ViralForgeBot(discord.Client):
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
-                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
                 return
             brand = await asyncio.to_thread(self.repository.default_brand)
             session = next(get_session())
