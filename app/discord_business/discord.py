@@ -22,6 +22,32 @@ from app.discord_business.service import (
 
 BUSINESS_ASSET_ROOT = Path("assets/discord/viralforge")
 BUSINESS_COLOR = 0xFF4D44
+STAFF_ROLE_KEYS = {
+    "owner",
+    "administrator",
+    "operations_lead",
+    "content_operator",
+    "customer_success",
+    "support_team",
+    "developer",
+}
+
+ACTION_LABELS = {
+    "view_platform": "View Platform",
+    "choose_role": "Choose Role",
+    "start_onboarding": "Start Onboarding",
+    "open_support": "Open Support",
+    "how_it_works": "How It Works",
+    "view_pricing": "View Pricing",
+    "request_access": "Request Access",
+    "talk_to_sales": "Talk to Sales",
+    "view_publishing_flow": "View Publishing Flow",
+    "view_tickets": "View Tickets",
+    "review_customers": "Review Customers",
+    "refresh": "Refresh",
+    "open_logs": "Open Logs",
+    "submit_feature": "Submit Feature Request",
+}
 
 
 def is_guild_owner(interaction: discord.Interaction) -> bool:
@@ -34,11 +60,33 @@ def _session() -> Session:
 
 def _public_embed(config: dict[str, Any], key: str) -> discord.Embed:
     item = config["embeds"]["embeds"][key]
-    return discord.Embed(
+    description = item["description"]
+    eyebrow = item.get("eyebrow")
+    if eyebrow:
+        description = f"**{eyebrow}**\n{description}"
+    embed = discord.Embed(
         title=item["title"],
-        description=item["description"],
+        description=description,
         color=int(item.get("color", "#ff4d44").lstrip("#"), 16),
     )
+    for field in item.get("fields", [])[:4]:
+        embed.add_field(name=field["name"], value=field["value"], inline=False)
+    branding = config["branding"]
+    embed.set_footer(text=branding["footer"])
+    icon_name = branding.get("icon_asset")
+    if icon_name and (Path(branding["asset_directory"]) / icon_name).is_file():
+        embed.set_thumbnail(url=f"attachment://{icon_name}")
+    asset = item.get("asset")
+    if asset and (Path(branding["asset_directory"]) / asset).is_file():
+        embed.set_image(url=f"attachment://{asset}")
+    return embed
+
+
+def _embed_files(config: dict[str, Any], key: str) -> list[discord.File]:
+    item, branding = config["embeds"]["embeds"][key], config["branding"]
+    root = Path(branding["asset_directory"])
+    names = [branding.get("icon_asset"), item.get("asset")]
+    return [discord.File(root / name, filename=name) for name in dict.fromkeys(names) if name and (root / name).is_file()]
 
 
 def _resource(
@@ -64,7 +112,8 @@ def _find_existing(
         return discord.utils.get(guild.roles, name=item.name)
     if item.resource_type == "category":
         return discord.utils.get(guild.categories, name=item.name)
-    return discord.utils.get(guild.text_channels, name=item.name)
+    channels = guild.forums if item.kind == "forum" else guild.text_channels
+    return discord.utils.get(channels, name=item.name)
 
 
 def _overwrites(
@@ -89,9 +138,9 @@ def _overwrites(
                 overwrites[role] = discord.PermissionOverwrite(
                     view_channel=True, send_messages=not item.read_only
                 )
-    for role_key in {"owner", "operator", "admin", "moderator", "support", "community_manager"}:
+    for role_key in STAFF_ROLE_KEYS:
         role = (role_cache or {}).get(role_key) or _role_by_key(session, repo, guild, role_key)
-        if role and item.audience not in {"operator"}:
+        if role:
             overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
     return overwrites
 
@@ -117,6 +166,12 @@ async def apply_server_plan(guild: discord.Guild, *, apply_changes: bool) -> tup
                 or _resource(session, repo, guild, item.resource_type, item.resource_key)
                 or _find_existing(guild, item)
             )
+            if item.resource_type == "channel" and existing is not None:
+                expected_forum = item.kind == "forum"
+                if expected_forum != isinstance(existing, discord.ForumChannel):
+                    # Discord channel types are immutable. Retain the legacy managed channel
+                    # and replace the resource mapping with a correctly typed successor.
+                    existing = None
             if existing is None:
                 if item.resource_type == "role":
                     role_config = next(
@@ -143,13 +198,64 @@ async def apply_server_plan(guild: discord.Guild, *, apply_changes: bool) -> tup
                         raise DiscordBusinessError(
                             f"missing configured category {item.category_key}"
                         )
-                    existing = await guild.create_text_channel(
-                        item.name,
-                        category=category,
-                        overwrites=_overwrites(session, repo, guild, item, resolved_roles),
-                        reason="ViralForge owner-approved setup",
-                    )
+                    overwrites = _overwrites(session, repo, guild, item, resolved_roles)
+                    if item.kind == "forum":
+                        existing = await guild.create_forum(
+                            item.name,
+                            category=category,
+                            overwrites=overwrites,
+                            reason="ViralForge owner-approved setup",
+                        )
+                        if item.tags:
+                            await existing.edit(
+                                available_tags=[discord.ForumTag(name=tag) for tag in item.tags],
+                                reason="ViralForge forum tag configuration",
+                            )
+                    else:
+                        existing = await guild.create_text_channel(
+                            item.name,
+                            category=category,
+                            overwrites=overwrites,
+                            reason="ViralForge owner-approved setup",
+                        )
                 changed += 1
+            elif item.resource_type == "role" and isinstance(existing, discord.Role):
+                role_config = next(
+                    value for value in config["roles"]["roles"] if value["key"] == item.resource_key
+                )
+                colour = discord.Colour(int(role_config["color"].lstrip("#"), 16))
+                if existing.name != item.name or existing.colour != colour:
+                    await existing.edit(
+                        name=item.name,
+                        colour=colour,
+                        reason="ViralForge managed role refresh",
+                    )
+                    changed += 1
+            elif item.resource_type == "category" and isinstance(existing, discord.CategoryChannel):
+                if existing.name != item.name:
+                    await existing.edit(name=item.name, reason="ViralForge managed category refresh")
+                    changed += 1
+            elif isinstance(existing, (discord.TextChannel, discord.ForumChannel)):
+                category = resolved.get(("category", item.category_key or "")) or _resource(
+                    session, repo, guild, "category", item.category_key or ""
+                )
+                if not isinstance(category, discord.CategoryChannel):
+                    raise DiscordBusinessError(f"missing configured category {item.category_key}")
+                if existing.name != item.name or existing.category_id != category.id:
+                    await existing.edit(
+                        name=item.name,
+                        category=category,
+                        reason="ViralForge managed channel refresh",
+                    )
+                    changed += 1
+                if isinstance(existing, discord.ForumChannel) and item.tags:
+                    existing_tags = {tag.name for tag in existing.available_tags}
+                    if existing_tags != set(item.tags):
+                        await existing.edit(
+                            available_tags=[discord.ForumTag(name=tag) for tag in item.tags],
+                            reason="ViralForge managed forum tag refresh",
+                        )
+                        changed += 1
             repo.save_resource(session, guild_config, item, existing.id)
             resolved[(item.resource_type, item.resource_key)] = existing
             if item.resource_type == "role" and isinstance(existing, discord.Role):
@@ -206,6 +312,91 @@ class RulesAcceptanceView(discord.ui.View):
             else "You already accepted the current rules.",
             ephemeral=True,
         )
+
+    @discord.ui.button(
+        label="Terms",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:business:terms",
+    )
+    async def terms(
+        self, interaction: discord.Interaction, _: discord.ui.Button[RulesAcceptanceView]
+    ) -> None:
+        await interaction.response.send_message(
+            "Terms are provided during access provisioning. Open Support if you need a copy.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Privacy",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:business:privacy",
+    )
+    async def privacy(
+        self, interaction: discord.Interaction, _: discord.ui.Button[RulesAcceptanceView]
+    ) -> None:
+        await interaction.response.send_message(
+            "Do not share credentials in Discord. Open Support for any privacy request.",
+            ephemeral=True,
+        )
+
+
+class PanelActionButton(discord.ui.Button["PanelActionView"]):
+    def __init__(self, panel_key: str, action: str) -> None:
+        self.action = action
+        super().__init__(
+            label=ACTION_LABELS[action],
+            style=(
+                discord.ButtonStyle.primary
+                if action in {"start_onboarding", "open_support", "request_access"}
+                else discord.ButtonStyle.secondary
+            ),
+            custom_id=f"viralforge:business:panel:{panel_key}:{action}",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        config = load_config()
+        if self.action in {"start_onboarding", "choose_role"}:
+            await interaction.response.send_message(
+                embed=_public_embed(config, "onboarding"),
+                view=OnboardingView(config),
+                ephemeral=True,
+            )
+            return
+        if self.action in {"open_support", "request_access", "talk_to_sales"}:
+            await _open_ticket(interaction, "general", "normal")
+            return
+        if self.action == "submit_feature":
+            await interaction.response.send_modal(FeedbackModal("feature_requests", "Feature request"))
+            return
+        channel_key = {
+            "view_platform": "product_overview",
+            "how_it_works": "how_it_works",
+            "view_pricing": "pricing_and_access",
+            "view_publishing_flow": "publishing_flow",
+            "view_tickets": "ticket_logs",
+            "review_customers": "customer_review",
+            "open_logs": "ticket_logs",
+        }.get(self.action)
+        if self.action == "refresh":
+            await interaction.response.send_message(
+                "Staff refresh is available through `/admin refresh-embeds`.", ephemeral=True
+            )
+            return
+        if channel_key:
+            await interaction.response.send_message(
+                f"Open the configured **#{channel_key.replace('_', '-')}** channel in this server.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_message("That action is not configured.", ephemeral=True)
+
+
+class PanelActionView(discord.ui.View):
+    def __init__(self, panel_key: str, actions: list[str]) -> None:
+        super().__init__(timeout=None)
+        for action in actions[:5]:
+            if action != "accept_rules":
+                self.add_item(PanelActionButton(panel_key, action))
 
 
 class OnboardingSelect(discord.ui.Select["OnboardingView"]):
@@ -291,6 +482,18 @@ class FeedbackModal(discord.ui.Modal):
                 f"New submission from {interaction.user.mention}:\n{self.detail.value}",
                 allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
             )
+        elif isinstance(target, discord.ForumChannel):
+            await target.create_thread(
+                name=f"{self.title} — {interaction.user.display_name}"[:100],
+                content=self.detail.value,
+                reason="ViralForge structured community submission",
+            )
+        else:
+            await interaction.response.send_message(
+                "That request destination is not configured yet. Open Support instead.",
+                ephemeral=True,
+            )
+            return
         await interaction.response.send_message(
             "Thanks — your submission was sent to the team.", ephemeral=True
         )
@@ -348,36 +551,47 @@ async def _open_ticket(interaction: discord.Interaction, ticket_type: str, prior
 async def publish_public_embeds(guild: discord.Guild) -> int:
     """Create/update official public messages without touching community conversation history."""
     config, repo, session = load_config(), BusinessRepository(), _session()
-    mapping = {
-        "welcome": "welcome",
-        "rules": "rules",
-        "start_here": "start_here",
-        "support": "support_desk",
-        "status": "platform_status",
-    }
     sent = 0
     try:
         guild_config = repo.guild_config(session, guild.id, guild.name, config["server"]["version"])
-        for embed_key, channel_key in mapping.items():
+        for embed_key, panel in config["embeds"]["embeds"].items():
+            channel_key = panel["channel"]
             channel = _resource(session, repo, guild, "channel", channel_key)
-            if not isinstance(channel, discord.TextChannel):
+            if not isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
                 continue
             embed = _public_embed(config, embed_key)
+            files = _embed_files(config, embed_key)
+            view: discord.ui.View | None
+            view = (
+                RulesAcceptanceView()
+                if "accept_rules" in panel.get("actions", [])
+                else PanelActionView(embed_key, panel.get("actions", []))
+            )
             saved = repo.published_embed(session, guild_config, embed_key)
             message = None
             if saved:
                 try:
-                    message = await channel.fetch_message(int(saved.discord_message_id))
-                    await message.edit(
-                        embed=embed, view=RulesAcceptanceView() if embed_key == "rules" else None
-                    )
+                    if isinstance(channel, discord.ForumChannel):
+                        thread = guild.get_thread(int(saved.discord_message_id))
+                        if thread is None:
+                            fetched = await guild.fetch_channel(int(saved.discord_message_id))
+                            thread = fetched if isinstance(fetched, discord.Thread) else None
+                        if thread is not None:
+                            message = await thread.fetch_message(int(saved.discord_message_id))
+                    else:
+                        message = await channel.fetch_message(int(saved.discord_message_id))
+                    if message is not None:
+                        await message.edit(embed=embed, view=view, attachments=files)
                 except discord.NotFound:
                     message = None
             if message is None:
-                if embed_key == "rules":
-                    message = await channel.send(embed=embed, view=RulesAcceptanceView())
+                if isinstance(channel, discord.ForumChannel):
+                    post = await channel.create_thread(
+                        name=panel["title"][:100], embed=embed, view=view, files=files
+                    )
+                    message = post.message
                 else:
-                    message = await channel.send(embed=embed)
+                    message = await channel.send(embed=embed, view=view, files=files)
             repo.save_embed(session, guild_config, embed_key, channel_key, message.id)
             sent += 1
         session.commit()
@@ -399,12 +613,37 @@ def _business_status(guild: discord.Guild) -> str:
         session.close()
 
 
+async def apply_business_presence(bot: Any, position: int = 0) -> int:
+    """Apply one configured activity. Rich-presence asset keys remain config-only for portal setup."""
+    config = load_config()
+    activities = config["branding"].get("presence", {}).get("activities", [])
+    if not activities:
+        return position
+    index = position % len(activities)
+    item = activities[index]
+    activity_type = {
+        "playing": discord.ActivityType.playing,
+        "watching": discord.ActivityType.watching,
+        "listening": discord.ActivityType.listening,
+        "competing": discord.ActivityType.competing,
+    }.get(item.get("type"), discord.ActivityType.playing)
+    await bot.change_presence(activity=discord.Activity(type=activity_type, name=item["name"]))
+    return index + 1
+
+
+def business_presence_interval() -> int:
+    return int(load_config()["branding"].get("presence", {}).get("rotation_seconds", 45))
+
+
 def register_business_commands(bot: Any) -> None:
     """Attach separate public/customer/admin groups without consuming the operational group budget."""
     if getattr(bot, "_business_commands_registered", False):
         return
     bot._business_commands_registered = True
     bot.add_view(RulesAcceptanceView())
+    for panel_key, panel in load_config()["embeds"]["embeds"].items():
+        if "accept_rules" not in panel.get("actions", []):
+            bot.add_view(PanelActionView(panel_key, panel.get("actions", [])))
     company = app_commands.Group(
         name="company", description="Public ViralForge company and platform information"
     )
@@ -419,6 +658,30 @@ def register_business_commands(bot: Any) -> None:
     bot.tree.add_command(support)
     bot.tree.add_command(account)
     bot.tree.add_command(admin)
+
+    @bot.tree.command(name="setup", description="Owner-only ViralForge server setup or refresh")
+    @app_commands.describe(apply_changes="Create or refresh managed server resources and panels")
+    async def setup(interaction: discord.Interaction, apply_changes: bool = False) -> None:
+        if not is_guild_owner(interaction) or interaction.guild is None:
+            await interaction.response.send_message(
+                "Only the Discord server owner can run setup.", ephemeral=True
+            )
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            preview, changed = await apply_server_plan(
+                interaction.guild, apply_changes=apply_changes
+            )
+            panels = await publish_public_embeds(interaction.guild) if apply_changes else 0
+        except (discord.DiscordException, DiscordBusinessError) as error:
+            await interaction.followup.send(f"Setup stopped safely: {error}", ephemeral=True)
+            return
+        await interaction.followup.send(
+            f"Setup complete: {changed} managed resources refreshed and {panels} official panels published. Unmanaged resources were preserved."
+            if apply_changes
+            else f"Dry-run: {len(preview)} resources would be created or repaired. Re-run with `apply_changes: True` to apply.",
+            ephemeral=True,
+        )
 
     @company.command(name="about", description="What ViralForge is")
     async def about(interaction: discord.Interaction) -> None:
@@ -488,7 +751,7 @@ def register_business_commands(bot: Any) -> None:
 
     @support.command(name="bug", description="Send a structured bug report")
     async def bug(interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(FeedbackModal("bug_reports", "Bug report"))
+        await interaction.response.send_modal(FeedbackModal("feature_requests", "Bug report"))
 
     @support.command(name="history", description="View your ticket history")
     async def history(interaction: discord.Interaction) -> None:
@@ -600,11 +863,12 @@ def register_business_commands(bot: Any) -> None:
             preview, changed = await apply_server_plan(
                 interaction.guild, apply_changes=apply_changes
             )
+            panels = await publish_public_embeds(interaction.guild) if apply_changes else 0
         except (discord.DiscordException, DiscordBusinessError) as error:
             await interaction.followup.send(f"Setup stopped safely: {error}", ephemeral=True)
             return
         message = (
-            f"Applied {changed} missing resources. Existing resources were retained."
+            f"Applied or refreshed {changed} managed resources and {panels} official panels. Existing unmanaged resources were retained."
             if apply_changes
             else f"Dry-run: {len(preview)} resources would be created or repaired. Re-run with `apply_changes: True` to apply."
         )

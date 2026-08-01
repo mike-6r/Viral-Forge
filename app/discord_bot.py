@@ -4,6 +4,7 @@ The bot is deliberately optional: the API does not import or start it.
 """
 
 import asyncio
+import contextlib
 import shutil
 import uuid
 from collections.abc import Generator
@@ -30,7 +31,11 @@ from app.content_packages.service import (
     edit_content_package,
     request_content_package_generation,
 )
-from app.discord_business.discord import register_business_commands
+from app.discord_business.discord import (
+    apply_business_presence,
+    business_presence_interval,
+    register_business_commands,
+)
 from app.discovery.models import DiscoveredMedia, DiscoverySource, DiscoveryStatus
 from app.discovery.service import approve_media, reject_media, run_source
 from app.ingestion.storage import LocalFilesystemStorage
@@ -2924,6 +2929,7 @@ class ViralForgeBot(discord.Client):
             repository or ProductionRepository(settings),
         )
         self.discovery_repository = DiscoveryRepository(self.settings)
+        self._business_presence_task: asyncio.Task[None] | None = None
         self.tree = app_commands.CommandTree(self)
         self.tree.add_command(
             app_commands.Group(name="viralforge", description="ViralForge clipping controls")
@@ -2967,6 +2973,7 @@ class ViralForgeBot(discord.Client):
                 continue
             self.add_view(OpportunityReviewView(opportunity_state, self.repository, self.settings))
         register_business_commands(self)
+        self._business_presence_task = asyncio.create_task(self._rotate_business_presence())
         group = self.tree.get_command("viralforge")
         assert isinstance(group, app_commands.Group)
         discovery_group = self.tree.get_command("discovery")
@@ -3278,6 +3285,23 @@ class ViralForgeBot(discord.Client):
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
+
+    async def _rotate_business_presence(self) -> None:
+        position = 0
+        while not self.is_closed():
+            try:
+                position = await apply_business_presence(self, position)
+            except Exception:
+                # Presence must never prevent the control plane from starting.
+                pass
+            await asyncio.sleep(business_presence_interval())
+
+    async def close(self) -> None:
+        if self._business_presence_task is not None:
+            self._business_presence_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._business_presence_task
+        await super().close()
 
 
 def run_bot() -> None:

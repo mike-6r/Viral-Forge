@@ -1,5 +1,5 @@
-ticket_types: [account, billing, technical, onboarding, safety, other]
+ticket_types: [general, workspace_setup, source_setup, publishing_issue, account_access, billing, custom_workflow]
 priority_levels: [normal, priority]
-private_category_key: support
-staff_roles: [owner, admin, moderator, support]
+private_category_key: private_requests
+staff_roles: [owner, administrator, operations_lead, customer_success, support_team]
 audit_events: [opened, assigned, closed, reopened]

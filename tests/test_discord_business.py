@@ -6,22 +6,34 @@ from app.discord_business.models import DiscordGuildConfig
 from app.discord_business.service import BusinessRepository, load_config, plan_resources
 
 
-def test_discord_business_configuration_is_complete_and_plans_private_control_plane():
+def test_discord_business_configuration_is_complete_and_plans_premium_control_plane():
     config = load_config(Path("config/discord"))
     resources = plan_resources(config)
     keys = {(item.resource_type, item.resource_key) for item in resources}
     assert {
         ("role", "owner"),
-        ("role", "operator"),
-        ("channel", "rules"),
-        ("channel", "ops_dashboard"),
-        ("channel", "bodycams_daily_hq"),
+        ("role", "operations_lead"),
+        ("role", "customer"),
+        ("channel", "start_here"),
+        ("channel", "team_dashboard"),
+        ("channel", "feature_requests"),
     } <= keys
-    assert (
-        next(item for item in resources if item.resource_key == "ops_dashboard").audience
-        == "operator"
+    assert next(item for item in resources if item.resource_key == "team_dashboard").audience == "staff"
+    assert next(
+        item
+        for item in resources
+        if item.resource_type == "channel" and item.resource_key == "start_here"
+    ).read_only
+    assert next(item for item in resources if item.resource_key == "feature_requests").kind == "forum"
+    assert next(item for item in resources if item.resource_key == "feature_requests").tags == (
+        "Feature",
+        "Integration",
+        "Workflow",
+        "Bug",
+        "Quality of Life",
+        "Planned",
+        "In Review",
     )
-    assert next(item for item in resources if item.resource_key == "rules").read_only
 
 
 def test_rules_onboarding_and_ticket_persistence_are_idempotent(session):
@@ -49,3 +61,34 @@ def test_discord_business_models_are_registered_for_schema_creation(session):
         "discord_published_embeds",
     } <= names
     assert session.query(DiscordGuildConfig).count() == 0
+
+
+def test_premium_panel_configuration_references_existing_assets_and_managed_channels():
+    config = load_config(Path("config/discord"))
+    resource_keys = {
+        item.resource_key for item in plan_resources(config) if item.resource_type == "channel"
+    }
+    asset_root = Path(config["branding"]["asset_directory"])
+    assert (asset_root / config["branding"]["icon_asset"]).is_file()
+    assert set(config["embeds"]["embeds"]) == {
+        "welcome",
+        "standards",
+        "product_overview",
+        "how_it_works",
+        "pricing",
+        "workspace_guide",
+        "sources",
+        "review_queue",
+        "publishing_flow",
+        "analytics",
+        "support",
+        "onboarding",
+        "team_dashboard",
+        "feature_requests",
+        "case_studies",
+    }
+    for panel in config["embeds"]["embeds"].values():
+        assert panel["channel"] in resource_keys
+        assert (asset_root / panel["asset"]).is_file()
+        assert len(panel.get("fields", [])) <= 4
+        assert len(panel.get("actions", [])) <= 5

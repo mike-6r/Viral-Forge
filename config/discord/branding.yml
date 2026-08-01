@@ -1,10 +1,25 @@
 name: ViralForge
-tagline: "The creator intelligence forge — from source to signal."
+tagline: "Content operations for short-form brands."
 palette:
-  background: "#101217"
-  surface: "#1a1f29"
-  coral: "#ff4d44"
-  blue: "#3ba3ff"
-  text: "#f5f7fa"
+  background: "#101114"
+  surface: "#1B1D22"
+  coral: "#FF4D2E"
+  ember: "#FF8A3D"
+  text: "#FFFFFF"
+  muted: "#A7ABB4"
 asset_directory: assets/discord/viralforge
-voice: "Competent, confident, technical, helpful, and never hype-first."
+icon_asset: vf-icon.png
+footer: "ViralForge | Content Operations Platform"
+voice: "Premium, sharp, trustworthy, concise, and human-approved."
+presence:
+  rotation_seconds: 45
+  activities:
+    - {type: playing, name: "ViralForge Control Room"}
+    - {type: watching, name: "Content Pipelines"}
+    - {type: listening, name: "Creator Submissions"}
+    - {type: competing, name: "Short-Form Launches"}
+  rich_presence_assets:
+    large_image: viralforge_icon
+    large_text: ViralForge
+    small_image: status_online
+    small_text: Operations Online

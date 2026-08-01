@@ -35,6 +35,8 @@ class ResourcePlan:
     audience: str
     category_key: str | None = None
     read_only: bool = False
+    kind: str = "text"
+    tags: tuple[str, ...] = ()
 
 
 def load_config(root: Path = CONFIG_ROOT) -> dict[str, Any]:
@@ -77,6 +79,8 @@ def plan_resources(config: dict[str, Any]) -> list[ResourcePlan]:
                 item["audience"],
                 item["category"],
                 bool(item.get("read_only")),
+                str(item.get("kind", "text")),
+                tuple(str(tag) for tag in item.get("tags", [])),
             )
         )
     return result
@@ -288,8 +292,14 @@ def audience_role_keys(audience: str) -> set[str]:
     return {
         "public": set(),
         "member": {"member"},
-        "customer": {"verified_customer"},
-        "bodycams_daily_hq": {"bodycams_daily_hq"},
-        "staff": {"owner", "admin", "moderator", "support", "community_manager"},
-        "operator": {"owner", "operator"},
+        "customer": {"customer"},
+        "staff": {
+            "owner",
+            "administrator",
+            "operations_lead",
+            "content_operator",
+            "customer_success",
+            "support_team",
+            "developer",
+        },
     }.get(audience, set())

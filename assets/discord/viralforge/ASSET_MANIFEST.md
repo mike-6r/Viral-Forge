@@ -15,4 +15,21 @@ All files in this directory are original ViralForge community artwork. They are 
 | `status-banner.png` | `#platform-status` | 2048×682 |
 | `bodycams-daily-hq-thumbnail.png` | private BodycamsDailyHQ surface | 1254×1254 |
 
-The additional banner filenames are generated from the same approved visual system and may be safely replaced through the asset workflow described in `DISCORD_BRANDING_GUIDE.md`.
+## Premium setup assets
+
+The current Discord setup uses the following generated assets. Each is an original raster asset attached to its matching Discord panel; no asset relies on an external URL.
+
+| Asset | Discord use |
+| --- | --- |
+| `vf-icon.png` | embed thumbnail / server and bot icon candidate |
+| `welcome-command-center.png` | Start Here and platform overview |
+| `how-it-works.png` | How It Works |
+| `workspace-guide.png` | Workspace Guide and onboarding |
+| `review-queue.png` | Review Queue |
+| `publishing-flow.png` | Publishing Flow |
+| `analytics.png` | Analytics |
+| `support.png` | Support and Feature Requests |
+| `platform-standards.png` | Rules and Standards |
+| `pricing-access.png` | Pricing and Access |
+| `staff-dashboard.png` | Team Dashboard |
+| `source-discovery.png` | Source Management |

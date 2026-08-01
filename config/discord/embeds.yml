@@ -1,6 +1,171 @@
 embeds:
-  welcome: {title: "Welcome to ViralForge", description: "Creator intelligence that stays human-controlled. Accept the rules to unlock the community.", color: "#ff4d44", asset: welcome-banner.png}
-  rules: {title: "Community rules", description: "Be respectful. Protect privacy and rights. Never share private customer, source, or operator material. Use support for account help.", color: "#ff4d44"}
-  start_here: {title: "Start here", description: "Choose who you are and what you want to build. Your choices personalize onboarding; they never grant operator access.", color: "#3ba3ff"}
-  support: {title: "Support desk", description: "Open a private ticket for account, billing, onboarding, technical, or safety help. Never paste credentials or private source files here.", color: "#48c78e"}
-  status: {title: "Platform status", description: "Service notices and known issues appear here. Operational dashboards remain private.", color: "#f6c85f"}
+  welcome:
+    channel: start_here
+    eyebrow: VIRALFORGE COMMAND CENTER
+    title: Welcome to ViralForge
+    description: "ViralForge helps teams run short-form content operations from discovery to publishing. Build workspaces, connect approved sources, review AI-assisted clips, approve posts, and track what performs."
+    color: "#FF4D2E"
+    asset: welcome-command-center.png
+    fields:
+      - {name: Platform, value: "Discovery, clipping, review, publishing, and analytics in one workflow."}
+      - {name: "Best for", value: "Creators, agencies, media companies, and businesses managing short-form brands."}
+      - {name: "Next step", value: "Choose your role, review how the platform works, or open onboarding."}
+    actions: [view_platform, choose_role, start_onboarding, open_support]
+  standards:
+    channel: start_here
+    eyebrow: ACCESS + TRUST
+    title: ViralForge Standards
+    description: "1. Keep customer files, source access, publishing credentials, and account data private.\n2. Only use approved, authorized, or publicly available sources.\n3. Do not request workflows that bypass platform rules or creator rights.\n4. Keep feedback specific, respectful, and useful.\n5. Use the right support path.\n6. Staff decisions around approvals, access, and publishing are final."
+    color: "#FF4D2E"
+    asset: platform-standards.png
+    actions: [accept_rules, terms, privacy]
+  product_overview:
+    channel: product_overview
+    eyebrow: PLATFORM OVERVIEW
+    title: The Operating System for Short-Form Content Brands
+    description: "ViralForge turns repeatable content work into an organized pipeline. Teams can discover source videos, identify strong moments, prepare clips, review metadata, approve posts, and learn from performance."
+    color: "#FF4D2E"
+    asset: welcome-command-center.png
+    fields:
+      - {name: Workflow, value: "Discover → Analyze → Clip → Review → Approve → Publish → Track"}
+      - {name: "Human control", value: "AI assists the workflow; operators retain approval and publishing control."}
+      - {name: "Built for scale", value: "Manage one brand or many workspaces from the same operational system."}
+    actions: [how_it_works, view_pricing, start_onboarding]
+  how_it_works:
+    channel: how_it_works
+    eyebrow: WORKFLOW
+    title: From Source Video to Published Short
+    description: "A clear system for moving approved source media through review-first short-form operations."
+    color: "#FF8A3D"
+    asset: how-it-works.png
+    fields:
+      - {name: Discover, value: "Monitor approved sources and surface promising content."}
+      - {name: Analyze, value: "Score moments for pacing, speech, movement, sentiment, and hook potential."}
+      - {name: Create, value: "Generate vertical clips, captions, titles, hashtags, and metadata."}
+      - {name: "Approve + learn", value: "Review before publishing, then track what performs."}
+    actions: [start_onboarding, open_support]
+  pricing:
+    channel: pricing_and_access
+    eyebrow: PLANS + ACCESS
+    title: Choose the Right Operating Level
+    description: "Access is provisioned by the ViralForge team. Billing is not collected or processed by Discord."
+    color: "#FF8A3D"
+    asset: pricing-access.png
+    fields:
+      - {name: Creator, value: "One brand or a focused content operation."}
+      - {name: Professional, value: "Teams managing multiple brands and more review volume."}
+      - {name: Agency, value: "Client workspaces and structured review queues."}
+      - {name: Enterprise, value: "Custom deployments, integrations, and dedicated support."}
+    actions: [request_access, talk_to_sales, open_support]
+  workspace_guide:
+    channel: workspace_guide
+    eyebrow: MULTI-BRAND OPERATIONS
+    title: Each Brand Gets Its Own Workspace
+    description: "A workspace keeps each content brand organized with its own sources, branding, captions, connected accounts, publishing rules, analytics, and permissions."
+    color: "#FF4D2E"
+    asset: workspace-guide.png
+    fields:
+      - {name: "Workspace includes", value: "Sources, brand rules, captions, review queue, publishing schedule, analytics, and team access."}
+      - {name: "Best practice", value: "Keep each brand isolated so operators can review and publish with clean context."}
+    actions: [start_onboarding, open_support]
+  sources:
+    channel: sources
+    eyebrow: DISCOVERY
+    title: Approved Source Management
+    description: "ViralForge works from configured, authorized, or publicly available sources. The goal is responsible discovery, not unrestricted scraping."
+    color: "#FF8A3D"
+    asset: source-discovery.png
+    fields:
+      - {name: "Source examples", value: "YouTube channels, public feeds, podcast channels, brand libraries, and creator-approved sources."}
+      - {name: Controls, value: "Sources can be reviewed, approved, paused, or removed per workspace."}
+    actions: [start_onboarding, open_support]
+  review_queue:
+    channel: review_queue
+    eyebrow: REVIEW QUEUE
+    title: Human-Approved Clip Pipeline
+    description: "Clips should not feel automatic or uncontrolled. Operators review the preview, caption, hashtags, metadata, and destination before anything goes live."
+    color: "#FF4D2E"
+    asset: review-queue.png
+    fields:
+      - {name: "Review actions", value: "Approve, reject, edit, request changes, or hold for later."}
+      - {name: "Quality checks", value: "Hook strength, rights context, captions, framing, platform fit, and brand safety."}
+    actions: [open_support, view_publishing_flow]
+  publishing_flow:
+    channel: publishing_flow
+    eyebrow: DISTRIBUTION
+    title: Publish With Rules, Schedules, and Control
+    description: "Every public upload requires explicit source, rights, moderation, clip, package, destination, and human publish or schedule approval."
+    color: "#FF8A3D"
+    asset: publishing-flow.png
+    fields:
+      - {name: "Connected destinations", value: "YouTube Shorts is supported first; other destinations are enabled only when officially connected and approved."}
+      - {name: "Before publishing", value: "Confirm account access, caption rules, schedule, and approval status."}
+    actions: [open_support, start_onboarding]
+  analytics:
+    channel: analytics
+    eyebrow: ANALYTICS
+    title: Learn What Performs
+    description: "Publishing is only the start. ViralForge helps teams understand which hooks, topics, formats, captions, and sources perform best over time."
+    color: "#FF4D2E"
+    asset: analytics.png
+    fields:
+      - {name: "Tracked signals", value: "Views, likes, comments, shares, watch time, retention, and follower growth when available."}
+      - {name: "Feedback loop", value: "Performance data informs recommendations; it never silently changes production settings."}
+    actions: [view_platform, open_support]
+  support:
+    channel: support
+    eyebrow: SUPPORT
+    title: Open the Right Request
+    description: "Choose the support path that fits your issue. Requests are private, structured, and routed with enough context for faster help."
+    color: "#FF8A3D"
+    asset: support.png
+    fields:
+      - {name: "Topics", value: "General, workspace setup, source setup, publishing issue, account access, billing, or custom workflow."}
+      - {name: Privacy, value: "Never paste credentials or private source media in a public channel."}
+    actions: [open_support]
+  onboarding:
+    channel: onboarding
+    eyebrow: CUSTOMER ONBOARDING
+    title: Start Your First Workspace
+    description: "Choose an account type, request a workspace, add approved sources, configure brand rules, review clips, then explicitly approve publishing when ready."
+    color: "#FF4D2E"
+    asset: workspace-guide.png
+    fields:
+      - {name: "First steps", value: "Account type → workspace → sources → brand rules."}
+      - {name: "Go live later", value: "Review clips and approve publishing only when the destination is connected."}
+    actions: [start_onboarding, open_support, view_platform]
+  team_dashboard:
+    channel: team_dashboard
+    eyebrow: TEAM DASHBOARD
+    title: Operations Control Center
+    description: "A clean overview for staff to monitor platform operations and customer movement."
+    color: "#FF4D2E"
+    asset: staff-dashboard.png
+    fields:
+      - {name: Requests, value: "Open tickets, onboarding requests, and blocked customers."}
+      - {name: "Content pipeline", value: "Pending discoveries, clips awaiting review, and publishing holds."}
+      - {name: "Customer activity", value: "New customers, active workspaces, and recent support activity."}
+      - {name: "System attention", value: "Processing issues, failed publishing jobs, and source-check alerts."}
+    actions: [view_tickets, review_customers, refresh, open_logs]
+  feature_requests:
+    channel: feature_requests
+    eyebrow: PRODUCT FEEDBACK
+    title: Suggest Platform Improvements
+    description: "Use this space to suggest improvements, integrations, workflow changes, or quality-of-life updates. Be specific and explain the workflow problem."
+    color: "#FF8A3D"
+    asset: support.png
+    fields:
+      - {name: "Useful context", value: "Include screenshots or examples when helpful."}
+      - {name: "Forum tags", value: "Feature, Integration, Workflow, Bug, Quality of Life, Planned, and In Review."}
+    actions: [submit_feature]
+  case_studies:
+    channel: case_studies
+    eyebrow: USE CASES
+    title: Content Operation Examples
+    description: "Explore example operating models for different brands. These are example workflows, not customer claims."
+    color: "#FF4D2E"
+    asset: welcome-command-center.png
+    fields:
+      - {name: Examples, value: "Bodycam pages, podcast clips, streamer highlights, sports pages, educational explainers, local business, real estate, and fitness."}
+      - {name: "Operating model", value: "Each workspace keeps sources, reviews, destinations, and analytics separate."}
+    actions: [start_onboarding, open_support]
