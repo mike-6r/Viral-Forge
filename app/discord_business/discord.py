@@ -68,7 +68,11 @@ def _find_existing(
 
 
 def _overwrites(
-    session: Session, repo: BusinessRepository, guild: discord.Guild, item: ResourcePlan
+    session: Session,
+    repo: BusinessRepository,
+    guild: discord.Guild,
+    item: ResourcePlan,
+    role_cache: dict[str, discord.Role] | None = None,
 ) -> dict[discord.Role | discord.Member | discord.Object, discord.PermissionOverwrite]:
     overwrites: dict[
         discord.Role | discord.Member | discord.Object, discord.PermissionOverwrite
@@ -80,13 +84,13 @@ def _overwrites(
     else:
         overwrites[guild.default_role] = discord.PermissionOverwrite(view_channel=False)
         for role_key in audience_role_keys(item.audience):
-            role = _role_by_key(session, repo, guild, role_key)
+            role = (role_cache or {}).get(role_key) or _role_by_key(session, repo, guild, role_key)
             if role:
                 overwrites[role] = discord.PermissionOverwrite(
                     view_channel=True, send_messages=not item.read_only
                 )
     for role_key in {"owner", "operator", "admin", "moderator", "support", "community_manager"}:
-        role = _role_by_key(session, repo, guild, role_key)
+        role = (role_cache or {}).get(role_key) or _role_by_key(session, repo, guild, role_key)
         if role and item.audience not in {"operator"}:
             overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
     return overwrites
@@ -103,12 +107,16 @@ async def apply_server_plan(guild: discord.Guild, *, apply_changes: bool) -> tup
         return [f"{item.resource_type}:{item.resource_key}" for item in plan], 0
     repo, session = BusinessRepository(), _session()
     changed = 0
+    resolved: dict[tuple[str, str], discord.Role | discord.abc.GuildChannel] = {}
+    resolved_roles: dict[str, discord.Role] = {}
     try:
         guild_config = repo.guild_config(session, guild.id, guild.name, config["server"]["version"])
         for item in plan:
-            existing = _resource(
-                session, repo, guild, item.resource_type, item.resource_key
-            ) or _find_existing(guild, item)
+            existing = (
+                resolved.get((item.resource_type, item.resource_key))
+                or _resource(session, repo, guild, item.resource_type, item.resource_key)
+                or _find_existing(guild, item)
+            )
             if existing is None:
                 if item.resource_type == "role":
                     role_config = next(
@@ -124,11 +132,13 @@ async def apply_server_plan(guild: discord.Guild, *, apply_changes: bool) -> tup
                 elif item.resource_type == "category":
                     existing = await guild.create_category(
                         item.name,
-                        overwrites=_overwrites(session, repo, guild, item),
+                        overwrites=_overwrites(session, repo, guild, item, resolved_roles),
                         reason="ViralForge owner-approved setup",
                     )
                 else:
-                    category = _resource(session, repo, guild, "category", item.category_key or "")
+                    category = resolved.get(("category", item.category_key or "")) or _resource(
+                        session, repo, guild, "category", item.category_key or ""
+                    )
                     if not isinstance(category, discord.CategoryChannel):
                         raise DiscordBusinessError(
                             f"missing configured category {item.category_key}"
@@ -136,11 +146,14 @@ async def apply_server_plan(guild: discord.Guild, *, apply_changes: bool) -> tup
                     existing = await guild.create_text_channel(
                         item.name,
                         category=category,
-                        overwrites=_overwrites(session, repo, guild, item),
+                        overwrites=_overwrites(session, repo, guild, item, resolved_roles),
                         reason="ViralForge owner-approved setup",
                     )
                 changed += 1
             repo.save_resource(session, guild_config, item, existing.id)
+            resolved[(item.resource_type, item.resource_key)] = existing
+            if item.resource_type == "role" and isinstance(existing, discord.Role):
+                resolved_roles[item.resource_key] = existing
         guild_config.setup_state, guild_config.setup_revision = (
             "APPLIED",
             guild_config.setup_revision + 1,
