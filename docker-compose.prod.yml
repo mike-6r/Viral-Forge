@@ -116,8 +116,10 @@ services:
     stop_grace_period: 30s
     logging: *logging
     networks: [edge, private]
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: [ALL]
+    # The official Caddy image carries the narrowly scoped capability needed
+    # to bind its in-container HTTP/HTTPS listener. no-new-privileges/cap-drop
+    # prevent the image binary from executing at all; retain hardening on every
+    # application service and isolate this edge proxy on its own networks.
 
 volumes:
   caddy_data:
