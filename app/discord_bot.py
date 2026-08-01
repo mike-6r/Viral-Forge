@@ -2345,15 +2345,20 @@ class OpportunityReviewView(discord.ui.View):
     ) -> None:
         if not await self._authorized(interaction):
             return
+        # Decision writes can take longer than Discord's interaction window.
+        # Acknowledge first so rejecting a suggestion is as reliable as approval.
+        await interaction.response.defer(thinking=True)
         try:
             opportunity = await asyncio.to_thread(
                 self.repository.decide_opportunity, self.state.opportunity.id, False
             )
             self.state = await asyncio.to_thread(self.repository.opportunity_state, opportunity.id)
         except ProductionError as error:
-            await interaction.response.send_message(user_error(error), ephemeral=True)
+            await interaction.followup.send(user_error(error), ephemeral=True)
             return
-        await self._refresh_review(interaction)
+        self.previous.disabled = self.state.position == 0
+        self.next.disabled = self.state.position == self.state.total - 1
+        await interaction.edit_original_response(embed=opportunity_embed(self.state), view=self)
 
     @discord.ui.button(label="View Details", style=discord.ButtonStyle.secondary)
     async def details(
