@@ -4,6 +4,9 @@ from sqlalchemy import JSON, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
+# Audit events are written by worker and service entry points that may not load
+# the API module, so register the brand FK target with this model.
+from app.brands.models import Brand  # noqa: F401
 from app.common.db import Base
 from app.common.types import UUIDTimestampMixin
 
