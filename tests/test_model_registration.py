@@ -20,4 +20,5 @@ def test_audit_model_registers_its_brand_foreign_key_target() -> None:
 
 
 def test_media_preview_service_registers_legacy_source_target() -> None:
-    assert "sources" in _isolated_metadata_tables("app.media_preview.service")
+    tables = _isolated_metadata_tables("app.media_preview.service")
+    assert {"sources", "users"} <= tables

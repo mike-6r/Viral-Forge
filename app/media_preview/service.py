@@ -20,6 +20,7 @@ from urllib.parse import quote
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.accounts.models import User  # noqa: F401
 from app.audit.models import AuditEvent
 from app.common.config import Settings, get_settings
 from app.content.models import MediaAsset
