@@ -283,8 +283,14 @@ async def apply_server_plan(guild: discord.Guild, *, apply_changes: bool) -> tup
                     )
                     changed += 1
             elif item.resource_type == "category" and isinstance(existing, discord.CategoryChannel):
+                properties: dict[str, Any] = {}
                 if existing.name != item.name:
-                    await existing.edit(name=item.name, reason="ViralForge managed category refresh")
+                    properties["name"] = item.name
+                overwrites = _overwrites(session, repo, guild, item, resolved_roles)
+                if existing.overwrites != overwrites:
+                    properties["overwrites"] = overwrites
+                if properties:
+                    await existing.edit(reason="ViralForge managed category refresh", **properties)
                     changed += 1
             elif isinstance(existing, (discord.TextChannel, discord.ForumChannel)):
                 category = resolved.get(("category", item.category_key or "")) or _resource(
@@ -292,12 +298,16 @@ async def apply_server_plan(guild: discord.Guild, *, apply_changes: bool) -> tup
                 )
                 if not isinstance(category, discord.CategoryChannel):
                     raise DiscordBusinessError(f"missing configured category {item.category_key}")
-                if existing.name != item.name or existing.category_id != category.id:
-                    await existing.edit(
-                        name=item.name,
-                        category=category,
-                        reason="ViralForge managed channel refresh",
-                    )
+                properties = {}
+                if existing.name != item.name:
+                    properties["name"] = item.name
+                if existing.category_id != category.id:
+                    properties["category"] = category
+                overwrites = _overwrites(session, repo, guild, item, resolved_roles)
+                if existing.overwrites != overwrites:
+                    properties["overwrites"] = overwrites
+                if properties:
+                    await existing.edit(reason="ViralForge managed channel refresh", **properties)
                     changed += 1
                 if isinstance(existing, discord.ForumChannel) and item.tags:
                     existing_tags = {tag.name for tag in existing.available_tags}

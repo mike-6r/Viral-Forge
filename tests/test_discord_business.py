@@ -101,3 +101,21 @@ def test_legacy_cleanup_candidates_do_not_overlap_current_channel_names():
         item.name for item in plan_resources(config) if item.resource_type == "channel"
     }
     assert not LEGACY_MANAGED_CHANNEL_NAMES & current_names
+
+
+def test_rules_acceptance_gates_member_areas_but_not_start_here():
+    config = load_config(Path("config/discord"))
+    category_audiences = {
+        item["key"]: item["audience"] for item in config["server"]["categories"]
+    }
+    assert category_audiences["start_here"] == "public"
+    assert {category_audiences[key] for key in ("platform", "workspaces", "content_ops", "customers", "community")} == {
+        "member"
+    }
+    assert category_audiences["team"] == "staff"
+    assert category_audiences["private_requests"] == "staff"
+    for channel in config["channels"]["channels"]:
+        if channel["category"] == "start_here":
+            assert channel["audience"] == "public"
+        elif channel["category"] not in {"team", "private_requests"}:
+            assert channel["audience"] == "member"

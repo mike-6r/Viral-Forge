@@ -2,19 +2,19 @@ channels:
   - {key: start_here, category: start_here, name: start-here, kind: text, audience: public, read_only: true}
   - {key: announcements, category: start_here, name: announcements, kind: text, audience: public, read_only: true}
   - {key: choose_your_role, category: start_here, name: choose-your-role, kind: text, audience: public, read_only: true}
-  - {key: product_overview, category: platform, name: product-overview, kind: text, audience: public, read_only: true}
-  - {key: how_it_works, category: platform, name: how-it-works, kind: text, audience: public, read_only: true}
-  - {key: pricing_and_access, category: platform, name: pricing-and-access, kind: text, audience: public, read_only: true}
-  - {key: workspace_guide, category: workspaces, name: workspace-guide, kind: text, audience: public, read_only: true}
-  - {key: sources, category: workspaces, name: sources, kind: text, audience: public, read_only: true}
-  - {key: review_queue, category: workspaces, name: review-queue, kind: text, audience: public, read_only: true}
-  - {key: publishing_flow, category: workspaces, name: publishing-flow, kind: text, audience: public, read_only: true}
-  - {key: discoveries, category: content_ops, name: discoveries, kind: forum, audience: public, read_only: false, tags: [Source, Review, Approved]}
-  - {key: caption_lab, category: content_ops, name: caption-lab, kind: text, audience: public, read_only: false}
-  - {key: analytics, category: content_ops, name: analytics, kind: text, audience: public, read_only: true}
-  - {key: case_studies, category: content_ops, name: case-studies, kind: forum, audience: public, read_only: false, tags: [Creator, Agency, Education, Local Business]}
-  - {key: onboarding, category: customers, name: onboarding, kind: text, audience: public, read_only: true}
-  - {key: support, category: customers, name: support, kind: text, audience: public, read_only: true}
+  - {key: product_overview, category: platform, name: product-overview, kind: text, audience: member, read_only: true}
+  - {key: how_it_works, category: platform, name: how-it-works, kind: text, audience: member, read_only: true}
+  - {key: pricing_and_access, category: platform, name: pricing-and-access, kind: text, audience: member, read_only: true}
+  - {key: workspace_guide, category: workspaces, name: workspace-guide, kind: text, audience: member, read_only: true}
+  - {key: sources, category: workspaces, name: sources, kind: text, audience: member, read_only: true}
+  - {key: review_queue, category: workspaces, name: review-queue, kind: text, audience: member, read_only: true}
+  - {key: publishing_flow, category: workspaces, name: publishing-flow, kind: text, audience: member, read_only: true}
+  - {key: discoveries, category: content_ops, name: discoveries, kind: forum, audience: member, read_only: false, tags: [Source, Review, Approved]}
+  - {key: caption_lab, category: content_ops, name: caption-lab, kind: text, audience: member, read_only: false}
+  - {key: analytics, category: content_ops, name: analytics, kind: text, audience: member, read_only: true}
+  - {key: case_studies, category: content_ops, name: case-studies, kind: forum, audience: member, read_only: false, tags: [Creator, Agency, Education, Local Business]}
+  - {key: onboarding, category: customers, name: onboarding, kind: text, audience: member, read_only: true}
+  - {key: support, category: customers, name: support, kind: text, audience: member, read_only: true}
   - {key: feature_requests, category: customers, name: feature-requests, kind: forum, audience: member, read_only: false, tags: [Feature, Integration, Workflow, Bug, "Quality of Life", Planned, "In Review"]}
   - {key: general, category: community, name: general, kind: text, audience: member, read_only: false}
   - {key: creator_talk, category: community, name: creator-talk, kind: text, audience: member, read_only: false}

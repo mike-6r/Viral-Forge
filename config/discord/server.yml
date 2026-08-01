@@ -7,10 +7,10 @@ community_values:
   - Keep feedback specific, respectful, and useful.
 categories:
   - {key: start_here, name: "01 • START HERE", audience: public}
-  - {key: platform, name: "02 • PLATFORM", audience: public}
-  - {key: workspaces, name: "03 • WORKSPACES", audience: public}
-  - {key: content_ops, name: "04 • CONTENT OPS", audience: public}
-  - {key: customers, name: "05 • CUSTOMERS", audience: public}
+  - {key: platform, name: "02 • PLATFORM", audience: member}
+  - {key: workspaces, name: "03 • WORKSPACES", audience: member}
+  - {key: content_ops, name: "04 • CONTENT OPS", audience: member}
+  - {key: customers, name: "05 • CUSTOMERS", audience: member}
   - {key: community, name: "06 • COMMUNITY", audience: member}
   - {key: team, name: "07 • TEAM", audience: staff}
   - {key: private_requests, name: "08 • PRIVATE REQUESTS", audience: staff}
