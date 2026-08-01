@@ -9,7 +9,7 @@ from app.content_packages.models import ContentPackage
 from app.discord_bot import (
     ClipReviewView,
     ContentPackageReviewView,
-    ControlCenterView,
+    OperatorHomeView,
     OpportunityReviewState,
     ProductionRepository,
     configured_role_ids,
@@ -161,8 +161,17 @@ def test_control_center_summarizes_persisted_workflow(session: Session, monkeypa
     state = repository.control_center()
     embed = control_center_embed(state)
     assert state.total_projects == 1 and state.source_review_count == 1
-    assert "1 source review" in " ".join(field.value for field in embed.fields)
-    assert len(ControlCenterView(repository, Settings()).children) == 9
+    assert state.active_brand_name
+    assert "1 video to review" in " ".join(field.value for field in embed.fields)
+    assert len(OperatorHomeView(repository, Settings()).children) == 6
+    assert [child.label for child in OperatorHomeView(repository, Settings()).children] == [
+        "Continue Working",
+        "Find Videos",
+        "Add Video",
+        "Review",
+        "Ready To Post",
+        "More",
+    ]
 
 
 def test_opportunity_embed_displays_ranked_reason_and_transcript():

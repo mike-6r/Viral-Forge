@@ -139,7 +139,53 @@ def run_video_analysis(
             analysis,
             LocalFilesystemStorage(Path(settings.local_storage_root)),
         )
+        if result.status == "COMPLETED":
+            # Analysis has no remaining human gate. Ranking is deterministic,
+            # idempotent, and still pauses before any clip is rendered.
+            generate_clip_opportunities.delay(str(result.id))
         return {"status": result.status, "analysis_id": str(result.id)}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.process_accepted_source")
+def process_accepted_source(project_id: str) -> dict[str, str]:
+    """Advance an accepted source through download and analysis exactly once.
+
+    This task performs no creative decision, does not render a clip, and does
+    not publish. `download_project` and `request_analysis` are idempotent, so
+    retry delivery cannot create a second source or analysis run.
+    """
+    from sqlalchemy import select
+
+    from app.accounts.models import Role, RoleName, User, UserRole
+    from app.analysis.service import request_analysis
+    from app.ingestion.storage import LocalFilesystemStorage
+    from app.production.models import ProductionProject
+    from app.production.service import download_project
+
+    session = next(get_session())
+    try:
+        actor = session.scalar(
+            select(User.id)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN]))
+            .order_by(User.created_at)
+        )
+        if actor is None:
+            return {"status": "no_actor", "project_id": project_id}
+        project = session.get(ProductionProject, project_id)
+        if project is None:
+            return {"status": "not_found", "project_id": project_id}
+        if project.status == "SOURCE_REJECTED":
+            return {"status": "source_rejected", "project_id": project_id}
+        project = download_project(
+            session, actor, project, LocalFilesystemStorage(Path(settings.local_storage_root))
+        )
+        analysis = request_analysis(session, actor, project)
+        run_video_analysis.delay(str(project.id), analysis_version=analysis.analysis_version)
+        return {"status": "processing", "project_id": project_id}
     finally:
         session.close()
 

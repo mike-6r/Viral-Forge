@@ -137,6 +137,7 @@ class OpportunityReviewState:
 
 @dataclass(frozen=True)
 class ControlCenterState:
+    active_brand_name: str
     total_projects: int
     source_review_count: int
     source_ready_count: int
@@ -459,7 +460,13 @@ class ProductionRepository:
             project = session.get(ProductionProject, project_id)
             if project is None:
                 raise ProductionError("PROJECT_NOT_FOUND", "project no longer exists")
-            return accept_source(session, self._actor(session), project)
+            accepted = accept_source(session, self._actor(session), project)
+            # A source decision is a human gate. Once it has been made, the
+            # persisted, idempotent worker pipeline owns the safe mechanical work.
+            from app.worker import process_accepted_source
+
+            process_accepted_source.delay(str(accepted.id))
+            return accepted
         finally:
             session.close()
 
@@ -738,7 +745,16 @@ class ProductionRepository:
             clip = session.get(ProductionClip, clip_id)
             if clip is None:
                 raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
-            return decide_clip(session, self._actor(session), clip, approved)
+            decided = decide_clip(session, self._actor(session), clip, approved)
+            if approved:
+                package = request_content_package_generation(
+                    session, self._actor(session), decided
+                )
+                if package.status == ContentPackageStatus.QUEUED:
+                    from app.worker import generate_content_package
+
+                    generate_content_package.delay(str(decided.id))
+            return decided
         finally:
             session.close()
 
@@ -871,12 +887,14 @@ class ProductionRepository:
         """Return compact, read-only operational counts for the Discord home view."""
         session = next(self._session())
         try:
-            brand_id = self._default_brand_in_session(session).id
+            brand = self._default_brand_in_session(session)
+            brand_id = brand.id
 
             def count(statement: Executable) -> int:
                 return int(session.scalar(statement) or 0)
 
             return ControlCenterState(
+                active_brand_name=brand.name,
                 total_projects=count(
                     select(func.count())
                     .select_from(ProductionProject)
@@ -1345,6 +1363,9 @@ class ProjectDashboardView(discord.ui.View):
     ) -> None:
         super().__init__(timeout=None)
         self.project_id, self.repository, self.settings = project_id, repository, settings
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.custom_id = f"viralforge:guided:{project_id}:{(item.label or '').lower().replace(' ', '-')}"
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 item.custom_id = f"viralforge:project:{project_id}:{(item.label or '').lower().replace(' ', '-')}"
@@ -1829,13 +1850,19 @@ class CandidateReviewView(discord.ui.View):
 
 
 def clip_embed(clip: ProductionClip, total: int) -> discord.Embed:
-    embed = discord.Embed(title=f"Clip {clip.clip_number} of {total}")
+    embed = discord.Embed(title=f"Finished clip {clip.clip_number} of {total}")
     embed.description = (
         f"{clip.start_seconds:.1f}s–{clip.end_seconds:.1f}s ({clip.duration_seconds:.1f}s)"
     )
-    embed.add_field(name="Render", value=clip.render_status)
-    embed.add_field(name="Approval", value=clip.approval_status)
-    embed.add_field(name="Queue", value=clip.publication_status)
+    embed.add_field(name="Timing", value=f"{clip.start_seconds:.1f}s to {clip.end_seconds:.1f}s")
+    embed.add_field(
+        name="Next step",
+        value=(
+            "Approve to prepare post details automatically."
+            if clip.approval_status == "PENDING"
+            else "This creative decision is already recorded."
+        ),
+    )
     if clip.caption:
         embed.add_field(name="Caption", value=clip.caption[:1024], inline=False)
     return embed
@@ -1843,19 +1870,22 @@ def clip_embed(clip: ProductionClip, total: int) -> discord.Embed:
 
 def opportunity_embed(state: OpportunityReviewState) -> discord.Embed:
     opportunity = state.opportunity
-    embed = discord.Embed(title=f"Opportunity {state.position + 1} of {state.total}")
+    embed = discord.Embed(title=f"Suggested clip {state.position + 1} of {state.total}")
     embed.description = (
         f"{opportunity.start_time:.1f}s–{opportunity.end_time:.1f}s "
         f"({opportunity.duration_seconds:.1f}s) · **{opportunity.overall_score:.1f}/100**"
     )
     embed.add_field(name="Confidence", value=f"{opportunity.confidence:.0%}", inline=True)
-    embed.add_field(name="Review", value=opportunity.review_status, inline=True)
-    embed.add_field(name="Generation", value=opportunity.generation_status, inline=True)
+    embed.add_field(
+        name="Next step",
+        value="Use this clip to render it automatically, or skip it.",
+        inline=True,
+    )
     top_reasons = sorted(
         state.reasons, key=lambda reason: reason.score * reason.weight, reverse=True
     )[:3]
     embed.add_field(
-        name="Top reasons",
+        name="Why ViralForge suggested it",
         value="\n".join(f"• {reason.reason_type}: {reason.score:.0%}" for reason in top_reasons)
         or "No scored reasons.",
         inline=False,
@@ -1901,7 +1931,7 @@ def content_package_embed(
 ) -> discord.Embed:
     fields = package.fields_json
     label = platform_field.replace("_", " ").title()
-    embed = discord.Embed(title=f"Content package v{package.generation_version}")
+    embed = discord.Embed(title="Post details")
     embed.description = f"Status: **{package.status}** · confidence {package.confidence:.0%}"
     embed.add_field(
         name="Primary hook",
@@ -2488,14 +2518,12 @@ class PublishConfirmationView(discord.ui.View):
 
 def discovery_embed(media: DiscoveredMedia) -> discord.Embed:
     embed = discord.Embed(
-        title=media.title or "Discovered public video",
-        description=f"{media.platform} · {media.lifecycle_status}",
+        title=media.title or "Recommended video",
+        description="A public video ViralForge found for your review.",
     )
-    embed.add_field(name="Uploader", value=media.uploader or "Unknown", inline=True)
-    embed.add_field(name="Relevance", value=f"{media.discovery_score:.0f}/100", inline=True)
-    embed.add_field(name="Duplicate", value=media.duplicate_status, inline=True)
-    embed.add_field(name="Watermark", value=media.watermark_status, inline=True)
-    embed.add_field(name="Source", value=media.canonical_url, inline=False)
+    embed.add_field(name="Source", value=media.uploader or "Unknown", inline=True)
+    embed.add_field(name="Match", value=f"{media.discovery_score:.0f}/100", inline=True)
+    embed.add_field(name="Original link", value=media.canonical_url, inline=False)
     reason = media.metadata_json.get("discovery_reason")
     if reason:
         embed.add_field(name="Discovery reason", value=str(reason)[:1024], inline=False)
@@ -2576,48 +2604,80 @@ class DiscoveryReviewView(discord.ui.View):
 
 
 def control_center_embed(state: ControlCenterState) -> discord.Embed:
+    """Default operator screen: plain-language decisions, not internal state."""
     embed = discord.Embed(
-        title="ViralForge Control Center",
-        description="Persistent operator home. Select a workspace below; all counts are live at refresh.",
-    )
-    embed.add_field(
-        name="Discovery",
-        value=f"{state.discovery_source_count} enabled sources · {state.discovery_pending_count} awaiting review",
-        inline=False,
-    )
-    embed.add_field(
-        name="Projects",
-        value=(
-            f"{state.total_projects} total · {state.source_review_count} source review · "
-            f"{state.source_ready_count} downloaded awaiting analysis"
+        title="ViralForge",
+        description=(
+            f"**Active brand: {state.active_brand_name}**\n"
+            f"{operator_attention_summary(state)}"
         ),
-        inline=False,
     )
     embed.add_field(
-        name="Analysis",
+        name="Needs attention",
         value=(
-            f"{state.analysis_queued_count} queued · {state.analysis_running_count} running · "
-            f"{state.analysis_completed_count} completed · {state.analysis_failed_count} failed"
+            f"{state.source_review_count} video{'s' if state.source_review_count != 1 else ''} to review\n"
+            f"{state.opportunity_pending_count} suggested clip{'s' if state.opportunity_pending_count != 1 else ''} to choose\n"
+            f"{state.clip_pending_count} finished clip{'s' if state.clip_pending_count != 1 else ''} to approve\n"
+            f"{state.failure_count} issue{'s' if state.failure_count != 1 else ''} to check"
         ),
-        inline=False,
+        inline=True,
     )
     embed.add_field(
-        name="Human review & queue",
+        name="Today",
         value=(
-            f"{state.opportunity_pending_count} opportunities · {state.clip_pending_count} clips · "
-            f"{state.queue_ready_count} ready to post"
+            f"Videos in progress: {state.total_projects}\n"
+            f"Videos being prepared: {state.analysis_queued_count + state.analysis_running_count}\n"
+            f"Content ready: {state.queue_ready_count}"
         ),
-        inline=False,
+        inline=True,
     )
     embed.add_field(
-        name="Attention",
-        value=(
-            f"{state.failure_count} recent project failures"
-            if state.failure_count
-            else "No project failures recorded."
-        ),
+        name="How ViralForge is helping",
+        value="Accepted videos are prepared automatically and pause only for your review.",
         inline=False,
     )
+    return embed
+
+
+def operator_attention_summary(state: ControlCenterState) -> str:
+    if state.failure_count:
+        return "A recent item needs a quick check before continuing."
+    if state.source_review_count or state.discovery_pending_count:
+        return "New videos are ready for your decision."
+    if state.opportunity_pending_count:
+        return "Suggested clips are ready for your decision."
+    if state.clip_pending_count:
+        return "Finished clips are ready for your approval."
+    if state.queue_ready_count:
+        return "Content is ready. Choose when to post it."
+    if state.analysis_queued_count or state.analysis_running_count:
+        return "ViralForge is preparing your video. You do not need to do anything yet."
+    return "Everything is caught up. Add a video or find a new one to continue."
+
+
+def ready_to_post_embed(
+    items: list[tuple[PostingQueueItem, ProductionClip, ProductionProject]], settings: Settings
+) -> discord.Embed:
+    embed = discord.Embed(title="Content ready")
+    if not items:
+        embed.description = "No finished content is waiting right now."
+        return embed
+    embed.description = (
+        "Your content is ready for the next publishing decision."
+        if settings.publishing_enabled
+        else "Your content is ready, but no publishing account is connected yet."
+    )
+    for item, clip, project in items[:10]:
+        destination = item.target_account_id or "No destination connected"
+        embed.add_field(
+            name=(project.source_title or "Finished video")[:256],
+            value=(
+                f"Clip {clip.clip_number} · {clip.duration_seconds:.0f}s\n"
+                f"Destination: {destination}\n"
+                f"{'Ready for explicit publishing' if settings.publishing_enabled else 'Save as content-ready'}"
+            )[:1024],
+            inline=False,
+        )
     return embed
 
 
@@ -2655,7 +2715,7 @@ class BrandPicker(discord.ui.Select["BrandSelectionView"]):
         await interaction.response.edit_message(
             content=f"Active brand: **{brand.name}**",
             embed=control_center_embed(state),
-            view=ControlCenterView(view.repository, view.settings, state),
+            view=OperatorHomeView(view.repository, view.settings),
         )
 
 
@@ -2706,8 +2766,8 @@ class ProjectPicker(discord.ui.Select["ProjectListView"]):
             )
             return
         await interaction.response.edit_message(
-            embed=dashboard_embed(state),
-            view=ProjectDashboardView(state.project.id, view.repository, view.settings, state),
+            embed=guided_project_embed(state),
+            view=GuidedProjectView(state.project.id, view.repository, view.settings),
         )
 
 
@@ -2922,6 +2982,307 @@ class ControlCenterView(discord.ui.View):
         await interaction.response.edit_message(embed=control_center_embed(self.state), view=self)
 
 
+def guided_project_embed(state: DashboardState) -> discord.Embed:
+    """A customer-facing project timeline; technical diagnostics stay in More Details."""
+    project = state.project
+    source_name = project.source_title or "Your selected video"
+    if project.status == "SOURCE_REVIEW_REQUIRED":
+        progress, next_step = "Source → Review", "Choose whether to use this video."
+    elif not project.source_storage_key:
+        progress, next_step = "Source → Preparing", "ViralForge is preparing this video automatically."
+    elif state.analysis is None or state.analysis.status in {"QUEUED", "RUNNING"}:
+        progress, next_step = "Source → Preparing video", "ViralForge is reviewing the video and finding moments."
+    elif not state.opportunity_count:
+        progress, next_step = "Source → Finding moments", "ViralForge is preparing clip suggestions."
+    elif state.approved_opportunity_count < state.opportunity_count:
+        progress, next_step = "Source → Suggested clips", "Choose the clip you want to use next."
+    elif state.total_clips and state.approved < state.total_clips:
+        progress, next_step = "Source → Clip ready", "Review the finished clip before it becomes content-ready."
+    else:
+        progress, next_step = "Source → Content ready", "Review the posting decision when you are ready."
+    embed = discord.Embed(title=source_name[:256], description=f"**{progress}**\n{next_step}")
+    embed.add_field(name="Original video", value=project.source_url[:1024], inline=False)
+    embed.add_field(
+        name="Video details",
+        value=(
+            f"{project.source_duration_seconds:.0f} seconds"
+            if project.source_duration_seconds
+            else "Duration will appear when the video is ready."
+        ),
+        inline=True,
+    )
+    embed.add_field(
+        name="Progress",
+        value=(
+            f"Suggested clips: {state.opportunity_count}\n"
+            f"Finished clips: {state.total_clips}\n"
+            f"Content ready: {state.queued}"
+        ),
+        inline=True,
+    )
+    if project.last_error:
+        embed.add_field(
+            name="Needs attention",
+            value="This video could not continue automatically. Open More Details for the safe error reference.",
+            inline=False,
+        )
+    return embed
+
+
+class GuidedProjectView(discord.ui.View):
+    def __init__(
+        self, project_id: uuid.UUID, repository: ProductionRepository, settings: Settings
+    ) -> None:
+        super().__init__(timeout=None)
+        self.project_id, self.repository, self.settings = project_id, repository, settings
+
+    async def _authorized(self, interaction: discord.Interaction) -> bool:
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(
+            interaction.user, self.settings
+        ):
+            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Continue Working", style=discord.ButtonStyle.success, custom_id="viralforge:guided:continue")
+    async def continue_working(
+        self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.dashboard, self.project_id)
+        if state.project.status == "SOURCE_REVIEW_REQUIRED":
+            try:
+                await asyncio.to_thread(self.repository.accept_source, self.project_id)
+            except ProductionError as error:
+                await interaction.response.send_message(user_error(error), ephemeral=True)
+                return
+            await interaction.response.edit_message(
+                content="Video accepted. ViralForge is downloading, inspecting, and preparing suggestions now.",
+                embed=guided_project_embed(await asyncio.to_thread(self.repository.dashboard, self.project_id)),
+                view=self,
+            )
+            return
+        if state.opportunity_count and state.approved_opportunity_count < state.opportunity_count:
+            pending = await asyncio.to_thread(self.repository.first_pending_opportunity)
+            if pending is not None:
+                await interaction.response.send_message(
+                    embed=opportunity_embed(pending),
+                    view=OpportunityReviewView(pending, self.repository, self.settings),
+                    ephemeral=True,
+                )
+                return
+        if state.total_clips and state.approved < state.total_clips:
+            pending_clip = await asyncio.to_thread(self.repository.first_pending_clip)
+            if pending_clip is not None:
+                await interaction.response.send_message(
+                    embed=clip_embed(pending_clip.clip, pending_clip.total),
+                    view=ClipReviewView(pending_clip, self.repository, self.settings),
+                    ephemeral=True,
+                )
+                return
+        if state.queued:
+            items = await asyncio.to_thread(self.repository.queue)
+            await interaction.response.send_message(
+                embed=ready_to_post_embed(items, self.settings), ephemeral=True
+            )
+            return
+        await interaction.response.send_message(
+            "ViralForge is continuing safely in the background. Refresh this page for the next decision.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Choose Another Video", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:alternatives")
+    async def alternatives(
+        self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.dashboard, self.project_id)
+        candidates = await asyncio.to_thread(self.repository.sources, self.project_id)
+        if not candidates:
+            await interaction.response.send_message("No alternative videos are available for this item.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            embed=candidate_embed(candidates),
+            view=CandidateReviewView(
+                self.project_id, state.project.source_decision_version, candidates, self.repository, self.settings
+            ),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="More Details", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:details")
+    async def details(
+        self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.dashboard, self.project_id)
+        await interaction.response.send_message(
+            "Advanced details are shown below. They do not change the workflow.",
+            embed=dashboard_embed(state),
+            view=ProjectDashboardView(self.project_id, self.repository, self.settings, state),
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:refresh")
+    async def refresh(
+        self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.dashboard, self.project_id)
+        await interaction.response.edit_message(embed=guided_project_embed(state), view=self)
+
+    @discord.ui.button(label="Home", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:home")
+    async def home(
+        self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.control_center)
+        await interaction.response.edit_message(
+            embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
+        )
+
+
+class AddVideoModal(discord.ui.Modal, title="Add a video"):
+    url: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
+        label="YouTube video URL", placeholder="https://www.youtube.com/watch?v=...", max_length=2048
+    )
+
+    def __init__(self, repository: ProductionRepository, settings: Settings) -> None:
+        super().__init__()
+        self.repository, self.settings = repository, settings
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            project = await asyncio.to_thread(self.repository.create_project, str(self.url))
+            state = await asyncio.to_thread(self.repository.dashboard, project.id)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            "Video added. Review it once, then ViralForge will prepare it automatically.",
+            embed=guided_project_embed(state),
+            view=GuidedProjectView(project.id, self.repository, self.settings),
+            ephemeral=True,
+        )
+
+
+class OperatorHomeView(discord.ui.View):
+    """The compact default navigation. Legacy controls remain available in More."""
+    def __init__(self, repository: ProductionRepository, settings: Settings) -> None:
+        super().__init__(timeout=None)
+        self.repository, self.settings = repository, settings
+
+    async def _authorized(self, interaction: discord.Interaction) -> bool:
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
+            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            return False
+        return True
+
+    async def _open_next(self, interaction: discord.Interaction) -> None:
+        projects = await asyncio.to_thread(self.repository.projects, "SOURCE_REVIEW_REQUIRED")
+        if projects:
+            state = await asyncio.to_thread(self.repository.dashboard, projects[0].id)
+            await interaction.response.send_message(embed=guided_project_embed(state), view=GuidedProjectView(state.project.id, self.repository, self.settings), ephemeral=True)
+            return
+        opportunity = await asyncio.to_thread(self.repository.first_pending_opportunity)
+        if opportunity is not None:
+            await interaction.response.send_message(embed=opportunity_embed(opportunity), view=OpportunityReviewView(opportunity, self.repository, self.settings), ephemeral=True)
+            return
+        clip = await asyncio.to_thread(self.repository.first_pending_clip)
+        if clip is not None:
+            await interaction.response.send_message(embed=clip_embed(clip.clip, clip.total), view=ClipReviewView(clip, self.repository, self.settings), ephemeral=True)
+            return
+        items = await asyncio.to_thread(DiscoveryRepository(self.settings).discovery_queue)
+        if items:
+            await interaction.response.send_message(embed=discovery_embed(items[0]), view=DiscoveryReviewView(items[0], DiscoveryRepository(self.settings), self.settings), ephemeral=True)
+            return
+        queue = await asyncio.to_thread(self.repository.queue)
+        if queue:
+            await interaction.response.send_message(embed=ready_to_post_embed(queue, self.settings), ephemeral=True)
+            return
+        await interaction.response.send_message("Everything is caught up. Add a video or find a new one to continue.", ephemeral=True)
+
+    @discord.ui.button(
+        label="Continue Working",
+        style=discord.ButtonStyle.success,
+        custom_id="viralforge:operator:continue",
+    )
+    async def continue_working(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]
+    ) -> None:
+        if await self._authorized(interaction):
+            await self._open_next(interaction)
+
+    @discord.ui.button(label="Find Videos", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:find")
+    async def find_videos(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.control_center)
+        if not state.discovery_source_count:
+            await interaction.response.send_message(
+                f"No approved discovery sources have been configured for {state.active_brand_name}. Add a source from More before running discovery.",
+                ephemeral=True,
+            )
+            return
+        items = await asyncio.to_thread(DiscoveryRepository(self.settings).discovery_queue)
+        if not items:
+            await interaction.response.send_message("ViralForge is checking your approved sources. No videos need review yet.", ephemeral=True)
+            return
+        await interaction.response.send_message(embed=discovery_embed(items[0]), view=DiscoveryReviewView(items[0], DiscoveryRepository(self.settings), self.settings), ephemeral=True)
+
+    @discord.ui.button(label="Add Video", style=discord.ButtonStyle.primary, custom_id="viralforge:operator:add")
+    async def add_video(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+        if await self._authorized(interaction):
+            await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
+
+    @discord.ui.button(label="Review", style=discord.ButtonStyle.primary, custom_id="viralforge:operator:review")
+    async def review(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]
+    ) -> None:
+        if await self._authorized(interaction):
+            await self._open_next(interaction)
+
+    @discord.ui.button(label="Ready To Post", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:ready")
+    async def ready_to_post(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        await interaction.response.send_message(embed=ready_to_post_embed(await asyncio.to_thread(self.repository.queue), self.settings), ephemeral=True)
+
+    @discord.ui.button(label="More", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:more")
+    async def more(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        await interaction.response.send_message(
+            "Advanced tools and diagnostics are available without changing your active workflow.",
+            view=AdvancedOperatorView(self.repository, self.settings), ephemeral=True,
+        )
+
+
+class AdvancedOperatorView(discord.ui.View):
+    def __init__(self, repository: ProductionRepository, settings: Settings) -> None:
+        super().__init__(timeout=300)
+        self.repository, self.settings = repository, settings
+
+    @discord.ui.button(label="Projects", style=discord.ButtonStyle.secondary)
+    async def projects(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
+        projects = await asyncio.to_thread(self.repository.projects)
+        await interaction.response.send_message(embed=projects_embed(projects, "Projects", "No videos have been added yet."), view=ProjectListView(projects, self.repository, self.settings), ephemeral=True)
+
+    @discord.ui.button(label="System Details", style=discord.ButtonStyle.secondary)
+    async def status(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
+        status = operational_status(self.settings)
+        await interaction.response.send_message("\n".join(f"{name}: {'ready' if value else 'not configured'}" for name, value in status.items()), ephemeral=True)
+
+    @discord.ui.button(label="Choose Brand", style=discord.ButtonStyle.secondary)
+    async def brands(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
+        brands = await asyncio.to_thread(self.repository.brands)
+        await interaction.response.send_message("Choose the brand you are working on.", view=BrandSelectionView(brands, self.repository, self.settings), ephemeral=True)
+
+
 class ViralForgeBot(discord.Client):
     def __init__(
         self, repository: ProductionRepository | None = None, settings: Settings | None = None
@@ -2957,12 +3318,14 @@ class ViralForgeBot(discord.Client):
 
     async def setup_hook(self) -> None:
         self.add_view(ControlCenterView(self.repository, self.settings))
+        self.add_view(OperatorHomeView(self.repository, self.settings))
         for project_id in await asyncio.to_thread(self.repository.active_dashboard_projects):
             try:
                 state = await asyncio.to_thread(self.repository.dashboard, project_id)
             except ProductionError:
                 continue
             self.add_view(ProjectDashboardView(project_id, self.repository, self.settings, state))
+            self.add_view(GuidedProjectView(project_id, self.repository, self.settings))
         for clip_id in await asyncio.to_thread(self.repository.active_review_clips):
             try:
                 clip_state = await asyncio.to_thread(self.repository.review_state, clip_id)
@@ -3075,8 +3438,8 @@ class ViralForgeBot(discord.Client):
             try:
                 channel = await self.review_channel()
                 message = await channel.send(
-                    embed=dashboard_embed(state),
-                    view=ProjectDashboardView(project.id, self.repository, self.settings, state),
+                    embed=guided_project_embed(state),
+                    view=GuidedProjectView(project.id, self.repository, self.settings),
                 )
             except discord.DiscordException:
                 await interaction.response.send_message(
@@ -3107,12 +3470,24 @@ class ViralForgeBot(discord.Client):
                 await interaction.response.send_message("Project not found.", ephemeral=True)
                 return
             await interaction.response.send_message(
-                embed=dashboard_embed(state),
-                view=ProjectDashboardView(state.project.id, self.repository, self.settings, state),
+                embed=guided_project_embed(state),
+                view=GuidedProjectView(state.project.id, self.repository, self.settings),
                 ephemeral=True,
             )
 
-        @group.command(name="home", description="Open the persistent ViralForge control center")
+        @self.tree.command(name="home", description="Open your guided ViralForge workspace")
+        async def operator_home(interaction: discord.Interaction) -> None:
+            if not isinstance(interaction.user, discord.Member) or not is_authorized(
+                interaction.user, self.settings
+            ):
+                await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                return
+            state = await asyncio.to_thread(self.repository.control_center)
+            await interaction.response.send_message(
+                embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
+            )
+
+        @group.command(name="home", description="Open your guided ViralForge workspace")
         async def home(interaction: discord.Interaction) -> None:
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
@@ -3122,17 +3497,26 @@ class ViralForgeBot(discord.Client):
             state = await asyncio.to_thread(self.repository.control_center)
             await interaction.response.send_message(
                 embed=control_center_embed(state),
-                view=ControlCenterView(self.repository, self.settings, state),
+                view=OperatorHomeView(self.repository, self.settings),
             )
 
-        @group.command(
-            name="review", description="Open the next pending opportunity, clip, or discovery item"
-        )
+        @group.command(name="review", description="Open the next item needing your creative decision")
         async def review(interaction: discord.Interaction) -> None:
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+                return
+            source_review = await asyncio.to_thread(
+                self.repository.projects, "SOURCE_REVIEW_REQUIRED"
+            )
+            if source_review:
+                state = await asyncio.to_thread(self.repository.dashboard, source_review[0].id)
+                await interaction.response.send_message(
+                    embed=guided_project_embed(state),
+                    view=GuidedProjectView(state.project.id, self.repository, self.settings),
+                    ephemeral=True,
+                )
                 return
             opportunity = await asyncio.to_thread(self.repository.first_pending_opportunity)
             if opportunity is not None:
@@ -3160,7 +3544,7 @@ class ViralForgeBot(discord.Client):
                     ephemeral=True,
                 )
                 return
-            await interaction.response.send_message("Review inbox is clear.", ephemeral=True)
+            await interaction.response.send_message("Nothing needs a creative decision right now.", ephemeral=True)
 
         @group.command(name="projects", description="List recent production projects")
         async def projects(interaction: discord.Interaction) -> None:
@@ -3200,7 +3584,7 @@ class ViralForgeBot(discord.Client):
                 ephemeral=True,
             )
 
-        @group.command(name="queue", description="Show ready clips")
+        @group.command(name="queue", description="Show content ready for the next publishing decision")
         async def queue(interaction: discord.Interaction) -> None:
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
@@ -3208,6 +3592,10 @@ class ViralForgeBot(discord.Client):
                 await interaction.response.send_message(unauthorized_message(), ephemeral=True)
                 return
             items = await asyncio.to_thread(self.repository.queue)
+            await interaction.response.send_message(
+                embed=ready_to_post_embed(items, self.settings), ephemeral=True
+            )
+            return
             body = (
                 "\n".join(
                     f"• {project.source_title or 'Project'} — clip {clip.clip_number}: {item.caption or 'No caption'}"

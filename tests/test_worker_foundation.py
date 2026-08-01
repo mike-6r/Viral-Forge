@@ -3,6 +3,7 @@ from app.worker import (
     audit_cleanup_preview,
     celery_app,
     generate_clip_opportunities,
+    process_accepted_source,
     run_video_analysis,
     stale_job_detection_preview,
 )
@@ -17,3 +18,5 @@ def test_safe_worker_tasks_are_registered_and_explicit_previews():
     assert run_video_analysis.name == "viralforge.run_video_analysis"
     assert "viralforge.generate_clip_opportunities" in celery_app.tasks
     assert generate_clip_opportunities.name == "viralforge.generate_clip_opportunities"
+    assert "viralforge.process_accepted_source" in celery_app.tasks
+    assert process_accepted_source.name == "viralforge.process_accepted_source"
