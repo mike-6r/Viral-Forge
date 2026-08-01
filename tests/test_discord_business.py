@@ -75,25 +75,61 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
     assert set(config["embeds"]["embeds"]) == {
         "welcome",
         "standards",
+        "choose_roles",
         "product_overview",
         "how_it_works",
         "pricing",
         "workspace_guide",
-        "sources",
         "review_queue",
-        "publishing_flow",
         "analytics",
         "support",
         "onboarding",
         "team_dashboard",
         "feature_requests",
-        "case_studies",
     }
     for panel in config["embeds"]["embeds"].values():
         assert panel["channel"] in resource_keys
-        assert (asset_root / panel["asset"]).is_file()
+        if panel.get("asset"):
+            assert (asset_root / panel["asset"]).is_file()
         assert len(panel.get("fields", [])) <= 4
         assert len(panel.get("actions", [])) <= 5
+
+
+def test_discord_saas_polish_has_exactly_seven_categories_and_nineteen_channels():
+    config = load_config(Path("config/discord"))
+    assert len(config["server"]["categories"]) == 7
+    assert len(config["channels"]["channels"]) == 19
+    assert [item["key"] for item in config["server"]["categories"]] == [
+        "start_here",
+        "platform",
+        "workspaces",
+        "customers",
+        "community",
+        "team",
+        "private_requests",
+    ]
+    assert [item["name"] for item in config["channels"]["channels"]] == [
+        "start-here",
+        "choose-your-role",
+        "announcements",
+        "overview",
+        "how-it-works",
+        "plans",
+        "workspace-guide",
+        "review-and-publish",
+        "analytics",
+        "onboarding",
+        "support",
+        "feature-requests",
+        "general",
+        "creator-talk",
+        "wins",
+        "team-dashboard",
+        "customer-review",
+        "operator-alerts",
+        "ticket-logs",
+    ]
+    assert not any(item["category"] == "private_requests" for item in config["channels"]["channels"])
 
 
 def test_legacy_cleanup_candidates_do_not_overlap_current_channel_names():
@@ -110,7 +146,7 @@ def test_rules_acceptance_gates_member_areas_but_not_start_here():
         item["key"]: item["audience"] for item in config["server"]["categories"]
     }
     assert category_audiences["start_here"] == "public"
-    assert {category_audiences[key] for key in ("platform", "workspaces", "content_ops", "customers", "community")} == {
+    assert {category_audiences[key] for key in ("platform", "workspaces", "customers", "community")} == {
         "member"
     }
     assert category_audiences["team"] == "staff"
@@ -126,17 +162,30 @@ def test_discord_premium_role_and_forum_boundaries_are_configured():
     config = load_config(Path("config/discord"))
     names = {item["key"] for item in config["roles"]["roles"]}
     assert {"member", "verified_customer", "customer", "trial_user"} <= names
-    self_service = {
-        *config["role_panels"]["panels"]["notifications"],
-        *config["role_panels"]["panels"]["interests"],
-    }
-    assert self_service == {
+    assert set(config["role_panels"]["panels"]["notifications"]) == {
         "product_updates",
         "processing_alerts",
         "feature_releases",
         "community_events",
     }
+    assert set(config["role_panels"]["account_type_role_keys"]) == {
+        "creator",
+        "agency",
+        "media_company",
+        "business",
+        "trial_user",
+    }
+    assert not set(config["role_panels"]["account_type_role_keys"]) & {
+        "workspace_owner",
+        "reviewer",
+        "publisher",
+        "analytics_viewer",
+        "customer",
+        "verified_customer",
+    }
     channels = {item["key"]: item for item in config["channels"]["channels"]}
-    assert channels["discoveries"]["tags"] == ["Source", "Clip Idea", "Trend", "Review", "Approved"]
-    assert channels["case_studies"]["tags"] == ["Creator", "Agency", "Media", "Business", "Example"]
+    assert channels["feature_requests"]["tags"] == [
+        "Feature", "Integration", "Workflow", "Bug", "Quality of Life", "In Review", "Planned"
+    ]
+    assert config["embeds"]["embeds"]["choose_roles"]["actions"] == []
     assert set(config["tickets"]["ticket_types"]) >= {"general", "bug_report", "feature_request"}

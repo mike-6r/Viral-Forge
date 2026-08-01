@@ -1,49 +1,47 @@
-# ViralForge Premium Discord Setup Report
+# ViralForge Discord SaaS Polish Report
 
 ## Delivered
 
-- Replaced the former broad community/control-plane layout with eight concise categories: Start Here, Platform, Workspaces, Content Ops, Customers, Community, Team, and Private Requests.
-- Added 24 intentional channels, including forum channels for discoveries, case studies, feature requests, and staff customer review.
-- Added professional staff, customer, workspace, and notification roles with restrained forge-themed colors.
-- Added 15 managed product panels with an eyebrow, concise description, up to four fields, a VF thumbnail, a flat branded wide image, and contextual actions.
-- Added persistent Rules, onboarding, support-ticket, and feature-request interactions. Ticket channels remain private to the requester and configured staff roles.
-- Added a rules-first welcome gate: new members see only Start Here, accept the standards, receive the Member role, and then gain Platform, Workspaces, Content Ops, Customers, and Community. Team remains staff-only.
-- Added the owner-only `/setup` command alongside `/admin setup-server`. Both create or refresh only ViralForge-managed resources, update managed panels, preserve unrelated channels and messages, and do not duplicate known resources.
-- Added `/setup-reset` and `/admin setup-reset`: an owner-confirmed, dry-run-first cleanup for legacy ViralForge-managed resources. It includes old text channels that conflict with replacement forums, but excludes private ticket channels and current setup resources.
-- Added configuration-backed rotating bot presence. Discord bot presences do not support application rich-presence images or buttons; the requested asset keys are retained in `config/discord/branding.yml` for Developer Portal configuration.
+- Simplified the managed server to seven customer-journey categories and 19 channels.
+- Merged product overview into `#overview`, pricing into `#plans`, source guidance into `#workspace-guide`, and review, caption, and publishing guidance into `#review-and-publish`.
+- Removed former discovery, case-study, caption-lab, publishing-flow, and duplicate managed pages from the current plan. They remain removable only through the owner-confirmed reset flow.
+- Added the persistent `#choose-your-role` panel with one account-type selector, one notification selector, and focused onboarding/support actions.
+- Kept Workspace Owner, Reviewer, Publisher, Analytics Viewer, Customer, Verified Customer, staff, and operator authority strictly staff-assigned. Account type is a profile preference only.
+- Shortened the public panels, limited banners to landing and guide pages, and removed banners from utility, forum, and staff dashboard panels.
+- Preserved the existing rules gate, read-only Start Here information channels, staff-only Team category, and ticket privacy model.
 
-## Brand assets
+## Final managed layout
 
-Generated and attached original flat SaaS assets:
+```
+01 - START HERE       start-here, choose-your-role, announcements
+02 - PLATFORM         overview, how-it-works, plans
+03 - WORKSPACES       workspace-guide, review-and-publish, analytics
+04 - CUSTOMERS        onboarding, support, feature-requests
+05 - COMMUNITY        general, creator-talk, wins
+06 - TEAM             team-dashboard, customer-review, operator-alerts, ticket-logs
+07 - PRIVATE REQUESTS private tickets created only when requested
+```
 
-- Command Center / Welcome
-- How It Works
-- Multi-Brand Workspaces
-- Human-Approved Review Pipeline
-- Short-Form Distribution
-- Performance Feedback Loop
-- Support Request Routing
-- Platform Standards
-- Operating Plan
-- Operations Control Center
-- Square VF mark
+## Safe deployment and cleanup
 
-Assets are local attachments under `assets/discord/viralforge`, so no customer or operational data leaves Discord through an image host.
+After deploying the bot, the server owner runs:
+
+1. `/admin config-check`
+2. `/admin setup-server` (dry run)
+3. `/admin setup-server apply_changes:true`
+4. `/admin setup-reset` (review the cleanup preview)
+5. `/admin setup-reset apply_changes:true` only after that review
+6. `/admin refresh-embeds`
+7. `/admin setup-status`
+
+The reset path removes only obsolete ViralForge-managed resources. It does not delete private ticket channels, unrelated user-created channels, or conversation history.
 
 ## Verification
 
-- `python -m pytest -q` — 118 passed.
-- `python -m ruff check app/discord_business app/discord_bot.py tests/test_discord_business.py` — passed.
-- `python -m mypy app/discord_business app/discord_bot.py` — passed.
-- Configuration tests verify all 15 panels reference an existing managed channel and local asset, forum tags are present, and no panel exceeds Discord-friendly field/action counts.
+- Configuration tests assert exactly seven categories and 19 configured channels.
+- Tests assert the role panel cannot self-assign workspace, customer, staff, or operator authority.
+- The configuration and persistent views keep rules acceptance, role selection, onboarding, support, and embed updates idempotent.
 
-## Live visual walkthrough
+## Manual visual check after deployment
 
-After deployment, the server owner should run `/setup apply_changes:true`, then inspect Start Here, Product Overview, How It Works, Pricing, Workspace Guide, Review Queue, Publishing Flow, Analytics, Support, Team Dashboard, and the three forums. This repository session cannot open the user’s authenticated Discord server, so that final visual inspection must occur after the bot reconnects.
-
-## Remaining manual choices
-
-- Verify the welcome gate with a non-staff account: before accepting rules it should see only `01 • START HERE`; after accepting, it should receive the `Member` role and see the member-facing categories. The next `/setup apply_changes:true` refreshes overwrites on existing managed resources.
-- Upload `vf-icon.png` as the Discord server and bot icon if desired.
-- The `viralforge_icon` and `status_online` rich-presence asset keys are documented in configuration for Developer Portal setup. They are not attachable by a Discord bot presence API.
-- Review `/setup-reset` before confirming cleanup. It leaves unrelated server resources and all private ticket channels intact.
+Confirm the Start Here category is the only area visible before rules acceptance, the account-type and notification selects display in `#choose-your-role`, Team remains hidden from non-staff, and a new private ticket is visible only to its requester and configured staff.

@@ -89,7 +89,6 @@ LEGACY_MANAGED_CHANNEL_NAMES = frozenset(
         "changelog",
         "welcome",
         "feature-overview",
-        "plans",
         "platform-status",
         "introductions",
         "showcase",
@@ -118,6 +117,12 @@ LEGACY_MANAGED_CHANNEL_NAMES = frozenset(
         "review-inbox",
         "posting-queue",
         "discovery-queue",
+        "sources",
+        "review-queue",
+        "publishing-flow",
+        "caption-lab",
+        "discoveries",
+        "case-studies",
         "source-review",
         "media-analysis",
         "clip-candidates",
@@ -562,7 +567,14 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
 
     async def callback(self, interaction: discord.Interaction) -> None:
         config = load_config()
-        if self.action in {"start_onboarding", "choose_role"}:
+        if self.action == "choose_role":
+            await interaction.response.send_message(
+                embed=_public_embed(config, "choose_roles"),
+                view=SelfRoleView(config),
+                ephemeral=True,
+            )
+            return
+        if self.action == "start_onboarding":
             await interaction.response.send_message(
                 embed=_public_embed(config, "onboarding"),
                 view=OnboardingView(config),
@@ -770,11 +782,12 @@ async def publish_public_embeds(guild: discord.Guild) -> int:
             embed = _public_embed(config, embed_key)
             files = _embed_files(config, embed_key)
             view: discord.ui.View | None
-            view = (
-                RulesAcceptanceView()
-                if "accept_rules" in panel.get("actions", [])
-                else PanelActionView(embed_key, panel.get("actions", []))
-            )
+            if embed_key == "choose_roles":
+                view = SelfRoleView(config)
+            elif "accept_rules" in panel.get("actions", []):
+                view = RulesAcceptanceView()
+            else:
+                view = PanelActionView(embed_key, panel.get("actions", []))
             saved = repo.published_embed(session, guild_config, embed_key)
             message = None
             if saved:
@@ -914,9 +927,7 @@ class BusinessDashboardView(discord.ui.View):
 
 class SelfRoleSelect(discord.ui.Select["SelfRoleView"]):
     def __init__(self, config: dict[str, Any]) -> None:
-        role_keys = list(config["role_panels"]["panels"]["notifications"]) + list(
-            config["role_panels"]["panels"]["interests"]
-        )
+        role_keys = list(config["role_panels"]["panels"]["notifications"])
         self.role_keys = role_keys
         names = {item["key"]: item["name"] for item in config["roles"]["roles"]}
         super().__init__(
@@ -965,10 +976,61 @@ class SelfRoleSelect(discord.ui.Select["SelfRoleView"]):
         )
 
 
+class AccountTypeSelect(discord.ui.Select["SelfRoleView"]):
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.role_keys = list(config["role_panels"]["account_type_role_keys"])
+        names = {item["key"]: item["name"] for item in config["roles"]["roles"]}
+        super().__init__(
+            placeholder="Choose your account type",
+            min_values=1,
+            max_values=1,
+            options=[discord.SelectOption(label=names[key], value=key) for key in self.role_keys],
+            custom_id="viralforge:operations:account-type",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in the ViralForge server.", ephemeral=True)
+            return
+        selected = self.values[0]
+        session, repo = _session(), BusinessRepository()
+        try:
+            config = load_config()
+            repo.guild_config(session, interaction.guild.id, interaction.guild.name, config["server"]["version"])
+            operations = OperationsRepository()
+            for role_key in self.role_keys:
+                role = _role_by_key(session, repo, interaction.guild, role_key)
+                if role is None:
+                    continue
+                if role_key == selected and role not in interaction.user.roles:
+                    await interaction.user.add_roles(role, reason="ViralForge account-type selection")
+                    operations.grant_role(
+                        session, interaction.guild.id, interaction.user.id, role_key, "SELF_SERVICE_PROFILE"
+                    )
+                elif role_key != selected and role in interaction.user.roles:
+                    await interaction.user.remove_roles(role, reason="ViralForge account-type selection")
+                    grant = operations.grant_role(
+                        session, interaction.guild.id, interaction.user.id, role_key, "SELF_SERVICE_PROFILE"
+                    )
+                    grant.removed_at, grant.removal_reason = discord.utils.utcnow(), "profile selection"
+            session.commit()
+        except (discord.DiscordException, OperationsError) as error:
+            session.rollback()
+            await interaction.response.send_message(f"Account-type update stopped safely: {error}", ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message("Account type saved. This does not grant workspace or operator access.", ephemeral=True)
+
+
 class SelfRoleView(discord.ui.View):
     def __init__(self, config: dict[str, Any] | None = None) -> None:
-        super().__init__(timeout=300)
-        self.add_item(SelfRoleSelect(config or load_config()))
+        super().__init__(timeout=None)
+        resolved = config or load_config()
+        self.add_item(AccountTypeSelect(resolved))
+        self.add_item(SelfRoleSelect(resolved))
+        self.add_item(PanelActionButton("choose_roles", "start_onboarding"))
+        self.add_item(PanelActionButton("choose_roles", "open_support"))
 
 
 def register_business_commands(bot: Any) -> None:
@@ -977,8 +1039,9 @@ def register_business_commands(bot: Any) -> None:
         return
     bot._business_commands_registered = True
     bot.add_view(RulesAcceptanceView())
+    bot.add_view(SelfRoleView())
     for panel_key, panel in load_config()["embeds"]["embeds"].items():
-        if "accept_rules" not in panel.get("actions", []):
+        if panel_key != "choose_roles" and "accept_rules" not in panel.get("actions", []):
             bot.add_view(PanelActionView(panel_key, panel.get("actions", [])))
     company = app_commands.Group(
         name="company", description="Public ViralForge company and platform information"
