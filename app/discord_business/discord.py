@@ -580,21 +580,22 @@ def register_business_commands(bot: Any) -> None:
         if interaction.guild is None:
             await interaction.response.send_message("Use this in a Discord server.", ephemeral=True)
             return
+        # The applied plan may create dozens of Discord resources. Acknowledge before
+        # Discord's interaction deadline, then send the final result ephemerally.
+        await interaction.response.defer(ephemeral=True, thinking=True)
         try:
             preview, changed = await apply_server_plan(
                 interaction.guild, apply_changes=apply_changes
             )
         except (discord.DiscordException, DiscordBusinessError) as error:
-            await interaction.response.send_message(
-                f"Setup stopped safely: {error}", ephemeral=True
-            )
+            await interaction.followup.send(f"Setup stopped safely: {error}", ephemeral=True)
             return
         message = (
             f"Applied {changed} missing resources. Existing resources were retained."
             if apply_changes
             else f"Dry-run: {len(preview)} resources would be created or repaired. Re-run with `apply_changes: True` to apply."
         )
-        await interaction.response.send_message(message, ephemeral=True)
+        await interaction.followup.send(message, ephemeral=True)
 
     @admin.command(name="setup-status", description="Owner-only Discord setup status")
     async def setup_status(interaction: discord.Interaction) -> None:
@@ -615,8 +616,9 @@ def register_business_commands(bot: Any) -> None:
                 "Only the Discord server owner can repair setup.", ephemeral=True
             )
             return
+        await interaction.response.defer(ephemeral=True, thinking=True)
         preview, changed = await apply_server_plan(interaction.guild, apply_changes=apply_changes)
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"Repaired {changed} resources."
             if apply_changes
             else f"Dry-run repair: {len(preview)} resources checked. Re-run with `apply_changes: True` to apply.",
