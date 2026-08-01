@@ -3340,13 +3340,19 @@ class ManualVideoConfirmationView(discord.ui.View):
     async def create(
         self, interaction: discord.Interaction, _: discord.ui.Button["ManualVideoConfirmationView"]
     ) -> None:
+        # Resolving a public source can take longer than Discord's three-second
+        # component acknowledgement window. Acknowledge first so the operator
+        # never sees a false timeout while the idempotent project creation runs.
+        await interaction.response.defer()
         try:
             project = await asyncio.to_thread(self.repository.create_project, self.url)
             state = await asyncio.to_thread(self.repository.dashboard, project.id)
         except ProductionError as error:
-            await interaction.response.send_message(user_error(error), ephemeral=True)
+            await interaction.edit_original_response(
+                content=user_error(error), view=RetryManualVideoView(self.repository, self.settings)
+            )
             return
-        await interaction.response.edit_message(
+        await interaction.edit_original_response(
             content="Video added. Review it once, then ViralForge will prepare it automatically.",
             embed=guided_project_embed(state),
             view=GuidedProjectView(project.id, self.repository, self.settings),
@@ -3481,19 +3487,20 @@ class YouTubeChannelModal(discord.ui.Modal, title="Add a YouTube channel"):
         self.repository, self.settings = repository, settings
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
+        # Official YouTube API validation is a network request, so defer before
+        # waiting on it rather than allowing Discord to time out the modal.
+        await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             channel = await asyncio.to_thread(self.repository.preview_youtube_channel, str(self.reference))
         except ProductionError:
-            await interaction.response.send_message(
-                "We could not validate that public YouTube channel yet. Check the URL or handle and try again.",
+            await interaction.edit_original_response(
+                content="We could not validate that public YouTube channel yet. Check the URL or handle and try again.",
                 view=RetryDiscoverySetupView(self.repository, self.settings),
-                ephemeral=True,
             )
             return
-        await interaction.response.send_message(
+        await interaction.edit_original_response(
             embed=youtube_channel_confirmation_embed(channel),
             view=DiscoverySourceConfirmationView(channel, self.repository, self.settings),
-            ephemeral=True,
         )
 
 
