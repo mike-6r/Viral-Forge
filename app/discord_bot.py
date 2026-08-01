@@ -1309,6 +1309,10 @@ def user_error(error: ProductionError | PublishingError | str) -> str:
         "STALE_SOURCE_ACTION": "Another operator changed the selected source. Refresh the project before deciding.",
         "STALE_OPPORTUNITY_ACTION": "Another operator reviewed this opportunity. Reopen the inbox before deciding.",
         "STALE_OPPORTUNITY": "This opportunity was superseded by a refreshed ranking. Reopen the inbox.",
+        "YOUTUBE_NOT_CONFIGURED": "YouTube discovery is not configured on this server. Add VIRALFORGE_YOUTUBE_API_KEY to the protected VPS environment file, then restart Discord.",
+        "YOUTUBE_CHANNEL_REFERENCE_INVALID": "Use a public YouTube channel URL, @handle, or channel ID.",
+        "YOUTUBE_CHANNEL_NOT_FOUND": "YouTube could not find that public channel. Confirm its URL or @handle and try again.",
+        "YOUTUBE_DISCOVERY_FAILED": "YouTube could not complete the official API request. Check that the API key is valid, YouTube Data API v3 is enabled, and project quota is available.",
     }
     detail = guidance.get(
         code,
@@ -3565,9 +3569,9 @@ class YouTubeChannelModal(discord.ui.Modal, title="Add a YouTube channel"):
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
             channel = await asyncio.to_thread(self.repository.preview_youtube_channel, str(self.reference))
-        except ProductionError:
+        except ProductionError as error:
             await interaction.edit_original_response(
-                content="We could not validate that public YouTube channel yet. Check the URL or handle and try again.",
+                content=user_error(error),
                 view=RetryDiscoverySetupView(self.repository, self.settings),
             )
             return

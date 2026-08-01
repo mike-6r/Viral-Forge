@@ -96,7 +96,16 @@ async def resolve_youtube_channel(
         channel_id = str(item.get("id") or "")
         if not channel_id:
             raise ProductionError("YOUTUBE_CHANNEL_NOT_FOUND", "the public YouTube channel was not found")
-        recent = await search_youtube("", max_results=1, channel_id=channel_id, settings=settings, client=client)
+        # The channel identity is authoritative once channels.list succeeds.
+        # A recent-upload preview is optional and uses a separately quota-limited
+        # endpoint, so it must not prevent an operator from enabling a valid
+        # public channel.
+        try:
+            recent = await search_youtube(
+                "", max_results=1, channel_id=channel_id, settings=settings, client=client
+            )
+        except ProductionError:
+            recent = []
         statistics = item.get("statistics", {})
         raw_count = statistics.get("videoCount")
         return YouTubeChannel(

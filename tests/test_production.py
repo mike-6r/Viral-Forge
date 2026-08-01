@@ -90,6 +90,37 @@ def test_resolve_youtube_channel_uses_only_official_api_metadata():
     assert channel.latest_upload_title == "Latest public upload"
 
 
+def test_resolve_youtube_channel_keeps_valid_channel_when_optional_preview_fails():
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/channels"):
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "id": "UCofficial",
+                            "snippet": {"title": "Police Activity", "thumbnails": {}},
+                            "statistics": {"videoCount": "42"},
+                        }
+                    ]
+                },
+            )
+        if request.url.path.endswith("/search"):
+            return httpx.Response(429, json={"error": {"message": "quota exceeded"}})
+        raise AssertionError(f"unexpected endpoint: {request.url}")
+
+    async def resolve() -> object:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            return await resolve_youtube_channel(
+                "https://www.youtube.com/@PoliceActivity", Settings(youtube_api_key="test-key"), client
+            )
+
+    channel = asyncio.run(resolve())
+    assert channel.channel_id == "UCofficial"
+    assert channel.title == "Police Activity"
+    assert channel.latest_upload_title is None
+
+
 def test_probe_and_approval_queue(session, tmp_path):  # type: ignore[no-untyped-def]
     def runner(*_: object, **__: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(
