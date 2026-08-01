@@ -4,6 +4,7 @@ from app.worker import (
     celery_app,
     generate_clip_opportunities,
     process_accepted_source,
+    render_approved_opportunity,
     run_video_analysis,
     stale_job_detection_preview,
 )
@@ -20,3 +21,5 @@ def test_safe_worker_tasks_are_registered_and_explicit_previews():
     assert generate_clip_opportunities.name == "viralforge.generate_clip_opportunities"
     assert "viralforge.process_accepted_source" in celery_app.tasks
     assert process_accepted_source.name == "viralforge.process_accepted_source"
+    assert "viralforge.render_approved_opportunity" in celery_app.tasks
+    assert render_approved_opportunity.name == "viralforge.render_approved_opportunity"

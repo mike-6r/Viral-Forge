@@ -52,7 +52,6 @@ from app.opportunities.models import (
 )
 from app.opportunities.service import (
     decide_opportunity,
-    generate_approved_opportunity,
     request_opportunity_generation,
 )
 from app.production.models import (
@@ -668,7 +667,12 @@ class ProductionRepository:
                 session, actor, opportunity, approved, opportunity.review_version
             )
             if approved:
-                generate_approved_opportunity(session, actor, result, self._storage())
+                # Rendering and previews are mechanical, potentially long-running work.
+                # Keep the Discord interaction responsive and let the idempotent worker
+                # resume it safely after a restart.
+                from app.worker import render_approved_opportunity
+
+                render_approved_opportunity.delay(str(result.id))
             return result
         finally:
             session.close()
@@ -3134,6 +3138,19 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
             f"Content ready: {state.queued}"
         ),
         inline=True,
+    )
+    milestones = [
+        ("Source", project.status != "SOURCE_REVIEW_REQUIRED"),
+        ("Downloaded", bool(project.source_storage_key)),
+        ("Analyzed", state.analysis is not None and state.analysis.status == "COMPLETED"),
+        ("Clips suggested", state.opportunity_count > 0),
+        ("Rendered", state.total_clips > 0),
+        ("Content ready", state.queued > 0),
+    ]
+    embed.add_field(
+        name="Production pipeline",
+        value="  ".join(f"{'✓' if complete else '○'} {label}" for label, complete in milestones),
+        inline=False,
     )
     if project.last_error:
         embed.add_field(

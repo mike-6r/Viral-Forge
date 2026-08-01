@@ -234,6 +234,48 @@ def generate_clip_opportunities(analysis_id: str, rerun: bool = False) -> dict[s
         session.close()
 
 
+@celery_app.task(name="viralforge.render_approved_opportunity")
+def render_approved_opportunity(opportunity_id: str) -> dict[str, str]:
+    """Render one human-approved opportunity and prepare its private preview.
+
+    The approval itself remains the creative gate. This task only performs the
+    persisted mechanical work and is safe when Celery redelivers it.
+    """
+    from sqlalchemy import select
+
+    from app.accounts.models import Role, RoleName, User, UserRole
+    from app.ingestion.storage import LocalFilesystemStorage
+    from app.opportunities.models import ClipOpportunity, OpportunityReviewStatus
+    from app.opportunities.service import generate_approved_opportunity
+
+    session = next(get_session())
+    try:
+        actor = session.scalar(
+            select(User.id)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN]))
+            .order_by(User.created_at)
+        )
+        opportunity = session.get(ClipOpportunity, opportunity_id)
+        if actor is None:
+            return {"status": "no_actor", "opportunity_id": opportunity_id}
+        if opportunity is None:
+            return {"status": "not_found", "opportunity_id": opportunity_id}
+        if opportunity.review_status != OpportunityReviewStatus.APPROVED:
+            return {"status": "not_approved", "opportunity_id": opportunity_id}
+        clip = generate_approved_opportunity(
+            session, actor, opportunity, LocalFilesystemStorage(Path(settings.local_storage_root))
+        )
+        if clip is None:
+            return {"status": "already_rendered", "opportunity_id": opportunity_id}
+        if clip.render_status == "SUCCEEDED" and settings.preview_proxy_enabled:
+            generate_preview_proxy_task.delay(str(clip.id))
+        return {"status": clip.render_status, "clip_id": str(clip.id)}
+    finally:
+        session.close()
+
+
 @celery_app.task(name="viralforge.generate_content_package")
 def generate_content_package(clip_id: str, rerun: bool = False) -> dict[str, str | int]:
     """Generate a review-only content package; this never queues or publishes a clip."""
