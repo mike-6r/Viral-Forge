@@ -13,6 +13,8 @@ def test_production_profile_is_private_and_has_all_operational_services():
     assert 'env_file: !override ["${VIRALFORGE_PRODUCTION_ENV_FILE:-.env.production}"]' in compose
     assert "service_completed_successfully" in compose
     assert "/viralforge-data" in compose
+    assert "egress:" in compose
+    assert "networks: [private, egress]" in compose
     caddy_block = compose.split("  caddy:", 1)[1].split("volumes:", 1)[0]
     assert "no-new-privileges" not in caddy_block
     assert "cap_drop" not in caddy_block

@@ -54,7 +54,9 @@ services:
     user: "10001:10001"
     stop_grace_period: 45s
     logging: *logging
-    networks: [private]
+    # Source resolution can call approved provider APIs, but the service has
+    # no published host port. Database and broker traffic stay private.
+    networks: [private, egress]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
 
@@ -67,7 +69,9 @@ services:
     user: "10001:10001"
     stop_grace_period: 10m
     logging: *logging
-    networks: [private]
+    # Workers need outbound access for authorized downloads and lazy model
+    # retrieval; inbound traffic remains unavailable.
+    networks: [private, egress]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
 
@@ -98,7 +102,9 @@ services:
     user: "10001:10001"
     stop_grace_period: 30s
     logging: *logging
-    networks: [private]
+    # Discord uses an outbound Gateway connection only. It must retain the
+    # private network for database/broker access but needs DNS and HTTPS egress.
+    networks: [private, egress]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
 
@@ -130,3 +136,6 @@ networks:
   edge:
   private:
     internal: true
+  # Egress-only bridge network for services that initiate approved outbound
+  # provider connections. No service on this network publishes a host port.
+  egress:
