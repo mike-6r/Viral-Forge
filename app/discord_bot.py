@@ -116,6 +116,7 @@ class DashboardState:
     motion_event_count: int
     loud_audio_event_count: int
     opportunity_count: int
+    pending_opportunity_count: int
     approved_opportunity_count: int
 
 
@@ -294,6 +295,7 @@ class ProductionRepository:
             motion_event_count = 0
             loud_audio_event_count = 0
             opportunity_count = 0
+            pending_opportunity_count = 0
             approved_opportunity_count = 0
             if analysis is not None:
                 segment_count = (
@@ -394,6 +396,17 @@ class ProductionRepository:
                     )
                     or 0
                 )
+                pending_opportunity_count = (
+                    session.scalar(
+                        select(func.count()).where(
+                            ClipOpportunity.project_id == project_id,
+                            ClipOpportunity.generation_version
+                            == latest_opportunity_run.generation_version,
+                            ClipOpportunity.review_status == OpportunityReviewStatus.PENDING,
+                        )
+                    )
+                    or 0
+                )
             return DashboardState(
                 project,
                 source,
@@ -411,6 +424,7 @@ class ProductionRepository:
                 motion_event_count,
                 loud_audio_event_count,
                 opportunity_count,
+                pending_opportunity_count,
                 approved_opportunity_count,
             )
         finally:
@@ -1371,8 +1385,10 @@ def lifecycle_next_action(state: DashboardState) -> str:
         and not state.opportunity_count
     ):
         return "Detect ranked clip opportunities from the stored analysis."
-    if state.opportunity_count and state.approved_opportunity_count < state.opportunity_count:
+    if state.pending_opportunity_count:
         return "Review the ranked opportunities."
+    if state.opportunity_count and not state.total_clips:
+        return "All ranked opportunities were reviewed; choose another source if none were selected."
     if state.total_clips and state.approved < state.total_clips:
         return "Review the rendered clips."
     return "Review the posting queue or open another project."
@@ -2352,13 +2368,24 @@ class OpportunityReviewView(discord.ui.View):
             opportunity = await asyncio.to_thread(
                 self.repository.decide_opportunity, self.state.opportunity.id, False
             )
-            self.state = await asyncio.to_thread(self.repository.opportunity_state, opportunity.id)
         except ProductionError as error:
             await interaction.followup.send(user_error(error), ephemeral=True)
             return
-        self.previous.disabled = self.state.position == 0
-        self.next.disabled = self.state.position == self.state.total - 1
-        await interaction.edit_original_response(embed=opportunity_embed(self.state), view=self)
+        next_pending = await asyncio.to_thread(
+            self.repository.first_pending_opportunity_for_project, opportunity.project_id
+        )
+        if next_pending is not None:
+            self.state = next_pending
+            self.previous.disabled = self.state.position == 0
+            self.next.disabled = self.state.position == self.state.total - 1
+            await interaction.edit_original_response(embed=opportunity_embed(self.state), view=self)
+            return
+        state = await asyncio.to_thread(self.repository.dashboard, opportunity.project_id)
+        await interaction.edit_original_response(
+            content="All suggested clips were declined. No clips will be rendered.",
+            embed=guided_project_embed(state),
+            view=GuidedProjectView(opportunity.project_id, self.repository, self.settings),
+        )
 
     @discord.ui.button(label="View Details", style=discord.ButtonStyle.secondary)
     async def details(
@@ -3149,8 +3176,10 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         progress, next_step = "Source → Preparing video", "ViralForge is reviewing the video and finding moments."
     elif not state.opportunity_count:
         progress, next_step = "Source → Finding moments", "ViralForge is preparing clip suggestions."
-    elif state.approved_opportunity_count < state.opportunity_count:
+    elif state.pending_opportunity_count:
         progress, next_step = "Source → Suggested clips", "Choose the clip you want to use next."
+    elif state.opportunity_count and not state.total_clips:
+        progress, next_step = "Source → Suggestions reviewed", "No clips were selected. Choose another video when ready."
     elif state.total_clips and state.approved < state.total_clips:
         progress, next_step = "Source → Clip ready", "Review the finished clip before it becomes content-ready."
     else:
@@ -3169,7 +3198,7 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
     embed.add_field(
         name="Progress",
         value=(
-            f"Suggested clips: {state.opportunity_count}\n"
+            f"Suggested clips: {state.pending_opportunity_count}\n"
             f"Finished clips: {state.total_clips}\n"
             f"Content ready: {state.queued}"
         ),
@@ -3233,7 +3262,7 @@ class GuidedProjectView(discord.ui.View):
                 view=self,
             )
             return
-        if state.opportunity_count and state.approved_opportunity_count < state.opportunity_count:
+        if state.pending_opportunity_count:
             pending = await asyncio.to_thread(
                 self.repository.first_pending_opportunity_for_project, self.project_id
             )
@@ -3244,6 +3273,12 @@ class GuidedProjectView(discord.ui.View):
                     ephemeral=True,
                 )
                 return
+        if state.opportunity_count and not state.total_clips:
+            await interaction.response.send_message(
+                "All suggested clips were declined. No clips will be rendered; choose another video when ready.",
+                ephemeral=True,
+            )
+            return
         if state.total_clips and state.approved < state.total_clips:
             pending_clip = await asyncio.to_thread(self.repository.first_pending_clip)
             if pending_clip is not None:

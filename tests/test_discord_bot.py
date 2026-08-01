@@ -24,7 +24,12 @@ from app.discord_bot import (
     opportunity_embed,
     run_bot,
 )
-from app.opportunities.models import ClipOpportunity, OpportunityGenerationRun, OpportunityReason
+from app.opportunities.models import (
+    ClipOpportunity,
+    OpportunityGenerationRun,
+    OpportunityReason,
+    OpportunityReviewStatus,
+)
 from app.production.models import ProductionClip, ProductionProject
 from app.production.service import ProductionError
 
@@ -270,7 +275,21 @@ def test_project_pending_opportunity_does_not_depend_on_selected_brand(session: 
         overlap_percentage=0.0,
         explanation="Project-scoped pending opportunity.",
     )
-    session.add(opportunity)
+    rejected = ClipOpportunity(
+        analysis_id=analysis_id,
+        project_id=project.id,
+        brand_id=project_brand_id,
+        generation_version=1,
+        start_time=30.0,
+        end_time=50.0,
+        duration_seconds=20.0,
+        confidence=0.7,
+        overall_score=70.0,
+        overlap_percentage=0.0,
+        review_status=OpportunityReviewStatus.REJECTED,
+        explanation="Rejected project-scoped opportunity.",
+    )
+    session.add_all([opportunity, rejected])
     session.commit()
 
     def session_provider():  # type: ignore[no-untyped-def]
@@ -280,6 +299,9 @@ def test_project_pending_opportunity_does_not_depend_on_selected_brand(session: 
     state = ProductionRepository(Settings()).first_pending_opportunity_for_project(project.id)
     assert state is not None
     assert state.opportunity.id == opportunity.id
+    dashboard = ProductionRepository(Settings()).dashboard(project.id)
+    assert dashboard.opportunity_count == 2
+    assert dashboard.pending_opportunity_count == 1
 
 
 def test_content_package_review_view_exposes_platform_selection_and_evidence():
