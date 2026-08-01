@@ -19,6 +19,7 @@ from app.analysis.models import (
     VideoAnalysis,
 )
 from app.audit.models import AuditEvent
+from app.brands.models import Brand  # noqa: F401
 from app.common.config import Settings, get_settings
 from app.ingestion.storage import LocalFilesystemStorage
 from app.opportunities.models import (
