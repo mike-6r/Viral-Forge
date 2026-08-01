@@ -3,7 +3,7 @@
 ## Scope
 
 Added an explicitly selected `VIRALFORGE_DEPLOYMENT_MODE=ip_bootstrap` profile
-for temporary `http://PUBLIC_VPS_IP` operator testing. Normal production remains
+for temporary `http://PUBLIC_VPS_IP:8081` operator testing. Normal production remains
 an explicit `production` mode and still requires HTTPS for public, preview, and
 OAuth callback URLs.
 
@@ -17,7 +17,8 @@ OAuth callback URLs.
 - Publishing, YouTube OAuth, and TikTok are startup-blocked. Both API and
   shared publishing-service attempts to create/verify destination connections
   or create/confirm publishing requests return the required trusted-HTTPS error.
-- `docker-compose.ip-bootstrap.yml` overrides Caddy to publish port 80 only;
+- `docker-compose.ip-bootstrap.yml` overrides Caddy to publish only the
+  configurable bootstrap port (default `8081`), avoiding an existing 80/443 site;
   it adds no API/database/Redis host ports. `Caddyfile.ip-bootstrap.example`
   proxies only to FastAPI, has safe headers and streaming timeouts, and no
   static storage mapping.
@@ -39,7 +40,7 @@ provided. The implementation therefore includes exact owner instructions in
 - Disposable PostgreSQL Compose migration cycle: upgraded cleanly to
   `0021_media_preview`; `alembic check` reported no new upgrade operations.
 - Combined base/production/IP-bootstrap Compose configuration: passed. Rendered
-  Caddy ports contain exactly `80:80`; the API, PostgreSQL, and Redis have no
+  Caddy ports contain exactly the configured bootstrap mapping; the API, PostgreSQL, and Redis have no
   host-port mappings.
 - `Caddyfile.ip-bootstrap.example`: passed `caddy validate`; Caddy explicitly
   reports that automatic HTTPS is not applied, as intended for temporary HTTP.

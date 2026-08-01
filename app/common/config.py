@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     api_base_url: str = "http://localhost:8000"
     public_base_url: str = "http://localhost:8000"
     public_host: str = ""
+    ip_bootstrap_port: int = Field(default=8081, ge=1, le=65535)
     oauth_callback_base_url: str = "http://localhost:8000"
     trusted_hosts: str = ""
     cors_allowed_origins: str = ""
@@ -346,8 +347,15 @@ class Settings(BaseSettings):
                 ("preview public base URL", self.preview_public_base_url),
             ):
                 parsed = urlsplit(value)
-                if parsed.scheme != "http" or parsed.hostname != public_ip or parsed.port is not None:
-                    raise ValueError(f"ip_bootstrap {name} must be HTTP for the exact public VPS IP")
+                if (
+                    parsed.scheme != "http"
+                    or parsed.hostname != public_ip
+                    or (parsed.port or 80) != self.ip_bootstrap_port
+                ):
+                    raise ValueError(
+                        "ip_bootstrap "
+                        f"{name} must be HTTP for the exact public VPS IP and configured port"
+                    )
             if self.publishing_enabled or self.publishing_youtube_enabled:
                 raise ValueError("ip_bootstrap forbids public publishing")
             if self.youtube_oauth_enabled or self.tiktok_enabled:

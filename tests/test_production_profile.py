@@ -47,7 +47,7 @@ def test_ip_bootstrap_profile_is_explicit_http_only_and_keeps_api_private():
     compose = Path("docker-compose.ip-bootstrap.yml").read_text(encoding="utf-8")
     caddy = Path("Caddyfile.ip-bootstrap.example").read_text(encoding="utf-8")
     environment = Path(".env.ip-bootstrap.example").read_text(encoding="utf-8")
-    assert 'ports: !override ["80:80"]' in compose
+    assert 'ports: !override ["${VIRALFORGE_IP_BOOTSTRAP_PORT:-8081}:80"]' in compose
     assert 'env_file: !override ["${VIRALFORGE_IP_BOOTSTRAP_ENV_FILE:-.env.ip-bootstrap}"]' in compose
     assert "http://{$VIRALFORGE_PUBLIC_IP}" in caddy
     assert "file_server" not in caddy

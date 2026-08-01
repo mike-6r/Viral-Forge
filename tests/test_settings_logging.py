@@ -83,10 +83,11 @@ def ip_bootstrap_settings(**overrides: object) -> Settings:
         "preview_hashing_secret": "p" * 40,
         "database_url": "postgresql+psycopg://viralforge:correct-horse-battery@postgres:5432/viralforge",
         "public_host": "198.51.100.10",
-        "api_base_url": "http://198.51.100.10",
-        "public_base_url": "http://198.51.100.10",
-        "preview_public_base_url": "http://198.51.100.10",
-        "oauth_callback_base_url": "http://198.51.100.10",
+        "ip_bootstrap_port": 8081,
+        "api_base_url": "http://198.51.100.10:8081",
+        "public_base_url": "http://198.51.100.10:8081",
+        "preview_public_base_url": "http://198.51.100.10:8081",
+        "oauth_callback_base_url": "http://198.51.100.10:8081",
         "trusted_hosts": "198.51.100.10,localhost,api",
         "publishing_enabled": False,
         "publishing_youtube_enabled": False,
@@ -100,11 +101,13 @@ def ip_bootstrap_settings(**overrides: object) -> Settings:
 def test_ip_bootstrap_allows_only_exact_http_ip_with_hardened_settings():
     settings = ip_bootstrap_settings()
     assert settings.deployment_mode == "ip_bootstrap"
-    assert settings.preview_public_base_url == "http://198.51.100.10"
+    assert settings.preview_public_base_url == "http://198.51.100.10:8081"
     with pytest.raises(ValidationError):
         ip_bootstrap_settings(trusted_hosts="198.51.100.11")
     with pytest.raises(ValidationError):
         ip_bootstrap_settings(preview_public_base_url="http://example.test")
+    with pytest.raises(ValidationError):
+        ip_bootstrap_settings(preview_public_base_url="http://198.51.100.10:8082")
     with pytest.raises(ValidationError):
         ip_bootstrap_settings(cors_allowed_origins="*")
     with pytest.raises(ValidationError):

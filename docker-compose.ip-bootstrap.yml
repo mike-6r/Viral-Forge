@@ -1,10 +1,10 @@
 # Add after docker-compose.prod.yml only for temporary IP bootstrap testing.
-# It intentionally publishes HTTP 80 only; the normal production profile keeps
-# Caddy HTTPS on 80/443 and must be used once a trusted hostname exists.
+# It intentionally publishes only the configured temporary HTTP port; the
+# normal production profile keeps Caddy HTTPS on 80/443 once a hostname exists.
 services:
   caddy:
     env_file: !override ["${VIRALFORGE_IP_BOOTSTRAP_ENV_FILE:-.env.ip-bootstrap}"]
-    ports: !override ["80:80"]
+    ports: !override ["${VIRALFORGE_IP_BOOTSTRAP_PORT:-8081}:80"]
     volumes:
       - ./Caddyfile.ip-bootstrap.example:/etc/caddy/Caddyfile:ro
       - caddy_config:/config
