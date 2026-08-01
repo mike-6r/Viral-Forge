@@ -27,6 +27,9 @@ from app.ingestion.storage import LocalFilesystemStorage
 from app.media_preview.models import PreviewGrant
 from app.production.models import ProductionClip, ProductionProject
 from app.publishing.models import PublishRequest, PublishRequestStatus
+# Register the legacy ingestion source table before MediaAsset's optional
+# source_id foreign key is flushed by a production-only media workflow.
+from app.sources.models import Source  # noqa: F401
 
 
 class PreviewError(Exception):
