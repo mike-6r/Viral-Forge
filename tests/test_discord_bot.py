@@ -24,7 +24,7 @@ from app.discord_bot import (
     opportunity_embed,
     run_bot,
 )
-from app.opportunities.models import ClipOpportunity, OpportunityReason
+from app.opportunities.models import ClipOpportunity, OpportunityGenerationRun, OpportunityReason
 from app.production.models import ProductionClip, ProductionProject
 from app.production.service import ProductionError
 
@@ -238,6 +238,48 @@ def test_opportunity_embed_displays_ranked_reason_and_transcript():
     embed = opportunity_embed(OpportunityReviewState(opportunity, [reason], "Test transcript", 0, 1))
     values = " ".join(field.value for field in embed.fields)
     assert "72.5/100" in (embed.description or "") and "SPEECH_QUALITY" in values
+
+
+def test_project_pending_opportunity_does_not_depend_on_selected_brand(session: Session, monkeypatch):
+    project = ProductionProject(
+        source_url="https://youtu.be/ProjectScopedOpportunity",
+        created_actor_id=uuid.UUID("a1111111-1111-1111-1111-111111111111"),
+    )
+    session.add(project)
+    session.flush()
+    analysis_id = uuid.uuid4()
+    project_brand_id = uuid.uuid4()
+    session.add(
+        OpportunityGenerationRun(
+            analysis_id=analysis_id,
+            project_id=project.id,
+            brand_id=project_brand_id,
+            generation_version=1,
+        )
+    )
+    opportunity = ClipOpportunity(
+        analysis_id=analysis_id,
+        project_id=project.id,
+        brand_id=project_brand_id,
+        generation_version=1,
+        start_time=5.0,
+        end_time=25.0,
+        duration_seconds=20.0,
+        confidence=0.8,
+        overall_score=80.0,
+        overlap_percentage=0.0,
+        explanation="Project-scoped pending opportunity.",
+    )
+    session.add(opportunity)
+    session.commit()
+
+    def session_provider():  # type: ignore[no-untyped-def]
+        yield session
+
+    monkeypatch.setattr("app.discord_bot.get_session", session_provider)
+    state = ProductionRepository(Settings()).first_pending_opportunity_for_project(project.id)
+    assert state is not None
+    assert state.opportunity.id == opportunity.id
 
 
 def test_content_package_review_view_exposes_platform_selection_and_evidence():

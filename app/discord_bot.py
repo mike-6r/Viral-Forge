@@ -1041,6 +1041,37 @@ class ProductionRepository:
             session.close()
         return self.opportunity_state(opportunity_id) if opportunity_id else None
 
+    def first_pending_opportunity_for_project(
+        self, project_id: uuid.UUID
+    ) -> OpportunityReviewState | None:
+        """Return the next pending suggestion for one project.
+
+        A guided project card is already scoped to a project.  It must not
+        depend on the operator's currently selected brand, since a legacy or
+        previously selected project can still legitimately need review.
+        """
+        session = next(self._session())
+        try:
+            run = session.scalar(
+                select(OpportunityGenerationRun)
+                .where(OpportunityGenerationRun.project_id == project_id)
+                .order_by(OpportunityGenerationRun.generation_version.desc())
+            )
+            if run is None:
+                return None
+            opportunity_id = session.scalar(
+                select(ClipOpportunity.id)
+                .where(
+                    ClipOpportunity.project_id == project_id,
+                    ClipOpportunity.generation_version == run.generation_version,
+                    ClipOpportunity.review_status == OpportunityReviewStatus.PENDING,
+                )
+                .order_by(ClipOpportunity.overall_score.desc(), ClipOpportunity.start_time)
+            )
+        finally:
+            session.close()
+        return self.opportunity_state(opportunity_id) if opportunity_id else None
+
     def active_dashboard_projects(self) -> list[uuid.UUID]:
         session = next(self._session())
         try:
@@ -3198,7 +3229,9 @@ class GuidedProjectView(discord.ui.View):
             )
             return
         if state.opportunity_count and state.approved_opportunity_count < state.opportunity_count:
-            pending = await asyncio.to_thread(self.repository.first_pending_opportunity)
+            pending = await asyncio.to_thread(
+                self.repository.first_pending_opportunity_for_project, self.project_id
+            )
             if pending is not None:
                 await interaction.response.send_message(
                     embed=opportunity_embed(pending),
