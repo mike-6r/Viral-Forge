@@ -1350,8 +1350,17 @@ def register_business_commands(bot: Any) -> None:
                 "Only the Discord server owner can refresh public embeds.", ephemeral=True
             )
             return
-        count = await publish_public_embeds(interaction.guild)
-        await interaction.response.send_message(
+        # Panel refresh can upload/update fifteen attachment-backed messages,
+        # which is longer than Discord's initial interaction response window.
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            count = await publish_public_embeds(interaction.guild)
+        except discord.DiscordException as error:
+            await interaction.followup.send(
+                f"Embed refresh stopped safely: {error}", ephemeral=True
+            )
+            return
+        await interaction.followup.send(
             f"Published {count} official embeds. Community history was not modified.",
             ephemeral=True,
         )
