@@ -1,0 +1,6 @@
+macros:
+  request_logs_safely: "Please share only redacted logs. Do not send passwords, API keys, OAuth tokens, database URLs, or cookies."
+  account_linking: "A support operator will verify your identity before linking a Discord account. Credentials are never collected in Discord."
+  preview_expired: "That preview may have expired. Ask an authorized operator to issue a new scoped preview link."
+  provider_unavailable: "The provider is currently unavailable. We have recorded the issue and will update this ticket when service is restored."
+  billing_coming_soon: "Billing is not active in Discord. Access changes are manually reviewed and provisioned."

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import discord
 from discord import app_commands
@@ -13,8 +13,11 @@ from app.common.db import get_session
 from app.discord_business.models import (
     DiscordGuildConfig,
     DiscordGuildResource,
+    DiscordModerationCase,
     DiscordPublishedEmbed,
+    DiscordTicket,
 )
+from app.discord_business.operations import OperationsError, OperationsRepository
 from app.discord_business.service import (
     BusinessRepository,
     DiscordBusinessError,
@@ -35,6 +38,31 @@ STAFF_ROLE_KEYS = {
     "support_team",
     "developer",
 }
+
+
+def is_business_staff(member: discord.Member) -> bool:
+    """Check configured roles at execution time, never merely command visibility."""
+    if member.guild.owner_id == member.id or member.guild_permissions.administrator:
+        return True
+    config = load_config()
+    staff_names = {
+        item["name"] for item in config["roles"]["roles"] if item["key"] in STAFF_ROLE_KEYS
+    }
+    return any(role.name in staff_names for role in member.roles)
+
+
+async def require_business_staff(interaction: discord.Interaction) -> discord.Member | None:
+    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+        await interaction.response.send_message("Use this in the ViralForge server.", ephemeral=True)
+        return None
+    if not is_business_staff(interaction.user):
+        await interaction.response.send_message("This action is restricted to authorized staff.", ephemeral=True)
+        return None
+    return interaction.user
+
+
+def can_manage_member(actor: discord.Member, target: discord.Member) -> bool:
+    return actor.guild.owner_id == actor.id or actor.top_role > target.top_role
 
 ACTION_LABELS = {
     "view_platform": "View Platform",
@@ -716,6 +744,7 @@ async def _open_ticket(interaction: discord.Interaction, ticket_type: str, prior
         ticket = repo.open_ticket(
             session, guild_config, channel.id, interaction.user.id, ticket_type, priority
         )
+        OperationsRepository().prepare_ticket(ticket, config)
         session.commit()
     finally:
         session.close()
@@ -827,6 +856,119 @@ def _reset_summary(actions: list[str], changed: int, apply_changes: bool) -> str
         "Nothing was deleted. Re-run with `apply_changes: True` to confirm.\n"
         f"{preview}{suffix}"
     )
+
+
+def _operations_dashboard_embed(summary: dict[str, dict[str, object]], section: str) -> discord.Embed:
+    values = summary.get(section, {})
+    embed = discord.Embed(
+        title=f"ViralForge Operations | {section.title()}",
+        color=BUSINESS_COLOR,
+        description="Private operational summary. Counts contain no customer content or credentials.",
+    )
+    for name, value in values.items():
+        embed.add_field(name=name.replace("_", " ").title(), value=str(value), inline=True)
+    return embed
+
+
+def _operations_summary(guild: discord.Guild) -> dict[str, dict[str, object]]:
+    session = _session()
+    try:
+        return OperationsRepository().dashboard(session, guild.id, guild.member_count or 0)
+    finally:
+        session.close()
+
+
+class BusinessDashboardSelect(discord.ui.Select["BusinessDashboardView"]):
+    def __init__(self) -> None:
+        super().__init__(
+            placeholder="Open an operations section",
+            custom_id="viralforge:operations:dashboard-section",
+            options=[
+                discord.SelectOption(label="Support Queue", value="support"),
+                discord.SelectOption(label="Customer Queue", value="server"),
+                discord.SelectOption(label="Moderation Queue", value="moderation"),
+                discord.SelectOption(label="Incidents", value="incidents"),
+                discord.SelectOption(label="Server Analytics", value="server"),
+                discord.SelectOption(label="Platform Status", value="incidents"),
+                discord.SelectOption(label="Staff Performance", value="support"),
+                discord.SelectOption(label="Refresh", value="refresh"),
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if not isinstance(interaction.user, discord.Member) or not is_business_staff(interaction.user):
+            await interaction.response.send_message("This dashboard is restricted to staff.", ephemeral=True)
+            return
+        section = "support" if self.values[0] == "refresh" else self.values[0]
+        summary = _operations_summary(cast(discord.Guild, interaction.guild))
+        await interaction.response.send_message(
+            embed=_operations_dashboard_embed(summary, section), ephemeral=True
+        )
+
+
+class BusinessDashboardView(discord.ui.View):
+    def __init__(self) -> None:
+        super().__init__(timeout=300)
+        self.add_item(BusinessDashboardSelect())
+
+
+class SelfRoleSelect(discord.ui.Select["SelfRoleView"]):
+    def __init__(self, config: dict[str, Any]) -> None:
+        role_keys = list(config["role_panels"]["panels"]["notifications"]) + list(
+            config["role_panels"]["panels"]["interests"]
+        )
+        self.role_keys = role_keys
+        names = {item["key"]: item["name"] for item in config["roles"]["roles"]}
+        super().__init__(
+            placeholder="Choose notification and interest roles",
+            min_values=0,
+            max_values=min(len(role_keys), int(config["role_panels"]["max_self_role_selections"])),
+            options=[discord.SelectOption(label=names[key], value=key) for key in role_keys],
+            custom_id="viralforge:operations:self-roles",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in the ViralForge server.", ephemeral=True)
+            return
+        selected = set(self.values)
+        session, repo = _session(), BusinessRepository()
+        try:
+            config = load_config()
+            repo.guild_config(session, interaction.guild.id, interaction.guild.name, config["server"]["version"])
+            operations = OperationsRepository()
+            changed: list[str] = []
+            for role_key in self.role_keys:
+                role = _role_by_key(session, repo, interaction.guild, role_key)
+                if role is None:
+                    continue
+                has_role = role in interaction.user.roles
+                if role_key in selected and not has_role:
+                    await interaction.user.add_roles(role, reason="ViralForge self-service role selection")
+                    operations.grant_role(session, interaction.guild.id, interaction.user.id, role_key, "SELF_SERVICE")
+                    changed.append(f"added {role.name}")
+                elif role_key not in selected and has_role:
+                    await interaction.user.remove_roles(role, reason="ViralForge self-service role selection")
+                    grant = operations.grant_role(session, interaction.guild.id, interaction.user.id, role_key, "SELF_SERVICE")
+                    grant.removed_at, grant.removal_reason = discord.utils.utcnow(), "self-service removal"
+                    changed.append(f"removed {role.name}")
+            session.commit()
+        except (discord.DiscordException, OperationsError) as error:
+            session.rollback()
+            await interaction.response.send_message(f"Role update stopped safely: {error}", ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message(
+            ", ".join(changed) if changed else "Your self-service roles are already current.",
+            ephemeral=True,
+        )
+
+
+class SelfRoleView(discord.ui.View):
+    def __init__(self, config: dict[str, Any] | None = None) -> None:
+        super().__init__(timeout=300)
+        self.add_item(SelfRoleSelect(config or load_config()))
 
 
 def register_business_commands(bot: Any) -> None:
@@ -1060,6 +1202,40 @@ def register_business_commands(bot: Any) -> None:
             ephemeral=True,
         )
 
+    @account.command(name="dashboard", description="Show your private ViralForge account summary")
+    async def account_dashboard(interaction: discord.Interaction) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in the ViralForge server.", ephemeral=True)
+            return
+        repo, session = BusinessRepository(), _session()
+        try:
+            config = session.query(DiscordGuildConfig).filter_by(guild_id=str(interaction.guild.id)).one_or_none()
+            link = repo.customer_link(session, config, interaction.user.id) if config else None
+            tickets = repo.tickets_for_user(session, config, interaction.user.id) if config else []
+        finally:
+            session.close()
+        embed = discord.Embed(title="Your ViralForge Account", color=BUSINESS_COLOR)
+        embed.add_field(name="Workspace", value="Linked" if link and link.workspace_id else "Not linked", inline=True)
+        embed.add_field(name="Support", value=f"{len(tickets)} ticket(s)", inline=True)
+        embed.add_field(name="Subscription", value="Manually assigned pilot access only", inline=False)
+        await interaction.response.send_message(embed=embed, view=SelfRoleView(), ephemeral=True)
+
+    @account.command(name="roles", description="Manage opt-in notifications and interests")
+    async def account_roles(interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(
+            "Choose opt-in notifications and interest roles. Customer, plan, staff, and operator roles require verified provisioning.",
+            view=SelfRoleView(),
+            ephemeral=True,
+        )
+
+    @bot.tree.command(name="roles", description="Manage ViralForge opt-in notification and interest roles")
+    async def roles(interaction: discord.Interaction) -> None:
+        await interaction.response.send_message(
+            "Choose opt-in notifications and interest roles. Customer, plan, staff, and operator roles require verified provisioning.",
+            view=SelfRoleView(),
+            ephemeral=True,
+        )
+
     @admin.command(name="setup-server", description="Owner-only dry-run or idempotent server setup")
     async def setup_server(interaction: discord.Interaction, apply_changes: bool = False) -> None:
         if not is_guild_owner(interaction):
@@ -1195,6 +1371,299 @@ def register_business_commands(bot: Any) -> None:
             f"ViralForge Discord config v{config['server']['version']}\nRoles: {sum(item.resource_type == 'role' for item in plan)}\nCategories: {sum(item.resource_type == 'category' for item in plan)}\nChannels: {sum(item.resource_type == 'channel' for item in plan)}\nNo credentials are stored or exported.",
             ephemeral=True,
         )
+
+    @admin.command(name="dashboard", description="Open the private operations command center")
+    async def admin_dashboard(interaction: discord.Interaction) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        summary = _operations_summary(member.guild)
+        await interaction.response.send_message(
+            embed=_operations_dashboard_embed(summary, "support"), view=BusinessDashboardView(), ephemeral=True
+        )
+
+    @admin.command(name="ticket-list", description="List open or overdue support tickets")
+    async def admin_ticket_list(interaction: discord.Interaction, overdue_only: bool = False) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            if overdue_only:
+                tickets = OperationsRepository().overdue_tickets(session, member.guild.id)
+            else:
+                config = session.query(DiscordGuildConfig).filter_by(guild_id=str(member.guild.id)).one()
+                tickets = list(session.query(DiscordTicket).filter(DiscordTicket.guild_config_id == config.id, DiscordTicket.status.not_in(["CLOSED", "SPAM", "DUPLICATE"])).order_by(DiscordTicket.created_at).limit(20))
+        finally:
+            session.close()
+        body = "\n".join(f"#{row.ticket_number} | {row.status} | {row.priority} | {'assigned' if row.assigned_staff_discord_user_id else 'unassigned'}" for row in tickets) or "No matching tickets."
+        await interaction.response.send_message(body, ephemeral=True)
+
+    @admin.command(name="ticket-assign", description="Assign a support ticket to an authorized staff member")
+    async def admin_ticket_assign(interaction: discord.Interaction, ticket_number: int, staff_member: discord.Member) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        if not is_business_staff(staff_member):
+            await interaction.response.send_message("The assignee must be an authorized staff member.", ephemeral=True)
+            return
+        session = _session()
+        try:
+            config = session.query(DiscordGuildConfig).filter_by(guild_id=str(member.guild.id)).one()
+            ticket = session.query(DiscordTicket).filter_by(guild_config_id=config.id, ticket_number=ticket_number).one_or_none()
+            if ticket is None:
+                await interaction.response.send_message("Ticket not found.", ephemeral=True)
+                return
+            OperationsRepository().assign_ticket(session, ticket, staff_member.id, member.id)
+            session.commit()
+        finally:
+            session.close()
+        await interaction.response.send_message(f"Ticket #{ticket_number} assigned to {staff_member.mention}.", ephemeral=True)
+
+    @admin.command(name="ticket-note", description="Add a private or customer-visible ticket note")
+    async def admin_ticket_note(interaction: discord.Interaction, ticket_number: int, note: str, customer_visible: bool = False) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            config = session.query(DiscordGuildConfig).filter_by(guild_id=str(member.guild.id)).one()
+            ticket = session.query(DiscordTicket).filter_by(guild_config_id=config.id, ticket_number=ticket_number).one_or_none()
+            if ticket is None:
+                await interaction.response.send_message("Ticket not found.", ephemeral=True)
+                return
+            OperationsRepository().add_ticket_note(session, ticket, member.id, note, visibility="CUSTOMER_VISIBLE" if customer_visible else "STAFF_ONLY")
+            session.commit()
+        finally:
+            session.close()
+        await interaction.response.send_message("Ticket note saved." + (" It is customer-visible." if customer_visible else " It is staff-only."), ephemeral=True)
+
+    @admin.command(name="ticket-status", description="Change a ticket state with a durable staff note")
+    async def admin_ticket_status(interaction: discord.Interaction, ticket_number: int, status: str, reason: str | None = None) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            config = session.query(DiscordGuildConfig).filter_by(guild_id=str(member.guild.id)).one()
+            ticket = session.query(DiscordTicket).filter_by(guild_config_id=config.id, ticket_number=ticket_number).one_or_none()
+            if ticket is None:
+                await interaction.response.send_message("Ticket not found.", ephemeral=True)
+                return
+            OperationsRepository().transition_ticket(session, ticket, status, member.id, reason)
+            session.commit()
+        except OperationsError as error:
+            session.rollback()
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message(f"Ticket #{ticket_number} is now {status.upper()}.", ephemeral=True)
+
+    @admin.command(name="ticket-overdue", description="Show tickets past their resolution SLA")
+    async def admin_ticket_overdue(interaction: discord.Interaction) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            tickets = OperationsRepository().overdue_tickets(session, member.guild.id)
+        finally:
+            session.close()
+        body = "\n".join(f"#{row.ticket_number} | {row.priority} | due {row.sla_resolution_due_at}" for row in tickets) or "No overdue tickets."
+        await interaction.response.send_message(body, ephemeral=True)
+
+    @admin.command(name="member-note", description="Add a private staff note to a member profile")
+    async def admin_member_note(interaction: discord.Interaction, target: discord.Member, note: str) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            OperationsRepository().add_staff_note(session, member.guild.id, "MEMBER", str(target.id), member.id, note)
+            session.commit()
+        finally:
+            session.close()
+        await interaction.response.send_message("Staff-only member note saved.", ephemeral=True)
+
+    @admin.command(name="staff-availability", description="Set your private ticket-routing availability")
+    async def admin_staff_availability(interaction: discord.Interaction, status: str, note: str | None = None) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            OperationsRepository().set_availability(session, member.guild.id, member.id, status.upper(), note)
+            session.commit()
+        except OperationsError as error:
+            session.rollback()
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message(f"Availability set to {status.upper()}.", ephemeral=True)
+
+    @admin.command(name="incident-create", description="Create a private incident record")
+    async def admin_incident_create(interaction: discord.Interaction, title: str, severity: str, systems: str = "platform") -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            incident = OperationsRepository().create_incident(session, member.guild.id, title, severity.upper(), member.id, [item.strip() for item in systems.split(",") if item.strip()])
+            session.commit()
+        except OperationsError as error:
+            session.rollback()
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message(f"Incident #{incident.incident_number} created. Public updates require a separate explicit action.", ephemeral=True)
+
+    @admin.command(name="announcement-create", description="Create a draft announcement; sending requires confirmation")
+    async def admin_announcement_create(interaction: discord.Interaction, title: str, body: str, target_channel_key: str = "announcements") -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        config = load_config()
+        if target_channel_key not in {item["key"] for item in config["channels"]["channels"]}:
+            await interaction.response.send_message("That configured announcement channel does not exist.", ephemeral=True)
+            return
+        session = _session()
+        try:
+            announcement = OperationsRepository().create_announcement(session, member.guild.id, member.id, title, body, target_channel_key, None)
+            session.commit()
+        finally:
+            session.close()
+        await interaction.response.send_message(f"Announcement draft {announcement.id} created. It has not been sent.", ephemeral=True)
+
+    @account.command(name="appeal", description="Appeal one of your moderation cases")
+    async def account_appeal(interaction: discord.Interaction, case_number: int, explanation: str) -> None:
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in the ViralForge server.", ephemeral=True)
+            return
+        session = _session()
+        try:
+            config = session.query(DiscordGuildConfig).filter_by(guild_id=str(interaction.guild.id)).one_or_none()
+            case = session.query(DiscordModerationCase).filter_by(
+                guild_config_id=config.id if config else None, case_number=case_number
+            ).one_or_none()
+            if case is None:
+                await interaction.response.send_message("That moderation case was not found.", ephemeral=True)
+                return
+            OperationsRepository().appeal_case(session, case, interaction.user.id, explanation, None)
+            session.commit()
+        except OperationsError as error:
+            session.rollback()
+            await interaction.response.send_message(str(error), ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message("Your appeal was recorded for staff review.", ephemeral=True)
+
+    @admin.command(name="moderation-cases", description="Show open moderation cases without message evidence")
+    async def admin_moderation_cases(interaction: discord.Interaction) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            config = session.query(DiscordGuildConfig).filter_by(guild_id=str(member.guild.id)).one()
+            rows = list(
+                session.query(DiscordModerationCase)
+                .filter_by(guild_config_id=config.id, status="OPEN")
+                .order_by(DiscordModerationCase.created_at.desc())
+                .limit(20)
+            )
+        finally:
+            session.close()
+        body = "\n".join(
+            f"Case #{row.case_number} | {row.rule_key} | {row.action} | member {row.subject_discord_user_id}"
+            for row in rows
+        ) or "No open moderation cases."
+        await interaction.response.send_message(body, ephemeral=True)
+
+    @admin.command(name="role-temporary", description="Grant a lower-ranked temporary role after confirmation")
+    async def admin_role_temporary(
+        interaction: discord.Interaction,
+        target: discord.Member,
+        role_key: str,
+        hours: int,
+        confirm: bool = False,
+    ) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        if not can_manage_member(member, target):
+            await interaction.response.send_message("Hierarchy protection prevents this action.", ephemeral=True)
+            return
+        if not confirm:
+            await interaction.response.send_message("Preview only. Re-run with `confirm: True` to grant the temporary role.", ephemeral=True)
+            return
+        session, repo = _session(), BusinessRepository()
+        try:
+            role = _role_by_key(session, repo, member.guild, role_key)
+            bot_member = member.guild.me
+            if role is None or bot_member is None or role >= bot_member.top_role:
+                await interaction.response.send_message("That role is unavailable or above the bot hierarchy.", ephemeral=True)
+                return
+            await target.add_roles(role, reason="ViralForge confirmed temporary role grant")
+            from datetime import timedelta
+
+            OperationsRepository().grant_role(
+                session, member.guild.id, target.id, role_key, "TEMPORARY", actor_id=member.id,
+                expires_at=discord.utils.utcnow() + timedelta(hours=max(1, min(hours, 720))),
+            )
+            session.commit()
+        finally:
+            session.close()
+        await interaction.response.send_message(f"Temporary {role.name} access granted to {target.mention}.", ephemeral=True)
+
+    @admin.command(name="announcement-publish", description="Publish a draft announcement after explicit confirmation")
+    async def admin_announcement_publish(interaction: discord.Interaction, announcement_id: str, confirm: bool = False) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        if not confirm:
+            await interaction.response.send_message("Preview only. Re-run with `confirm: True` to publish this draft.", ephemeral=True)
+            return
+        import uuid
+
+        session, repo = _session(), BusinessRepository()
+        try:
+            from app.discord_business.models import DiscordAnnouncement
+
+            row = session.get(DiscordAnnouncement, uuid.UUID(announcement_id))
+            config = session.query(DiscordGuildConfig).filter_by(guild_id=str(member.guild.id)).one_or_none()
+            if row is None or config is None or row.guild_config_id != config.id or row.status != "DRAFT":
+                await interaction.response.send_message("That draft is unavailable for this server.", ephemeral=True)
+                return
+            channel = _resource(session, repo, member.guild, "channel", row.target_channel_key)
+            if not isinstance(channel, discord.TextChannel):
+                await interaction.response.send_message("The configured announcement channel is unavailable.", ephemeral=True)
+                return
+            message = await channel.send(embed=discord.Embed(title=row.title, description=row.body, color=BUSINESS_COLOR))
+            row.status, row.discord_message_id, row.published_at = "PUBLISHED", str(message.id), discord.utils.utcnow()
+            session.commit()
+        except ValueError:
+            await interaction.response.send_message("Announcement ID is invalid.", ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message("Announcement published to its configured channel.", ephemeral=True)
+
+    @admin.command(name="analytics-snapshot", description="Create a privacy-safe aggregate Discord snapshot")
+    async def admin_analytics_snapshot(interaction: discord.Interaction) -> None:
+        member = await require_business_staff(interaction)
+        if member is None:
+            return
+        session = _session()
+        try:
+            snapshot = OperationsRepository().snapshot(session, member.guild.id, member.guild.member_count or 0)
+            session.commit()
+        finally:
+            session.close()
+        await interaction.response.send_message(f"Aggregate snapshot saved for {snapshot.snapshot_date}.", ephemeral=True)
 
     @admin.command(name="config-check", description="Owner-only config validity check")
     async def config_check(interaction: discord.Interaction) -> None:

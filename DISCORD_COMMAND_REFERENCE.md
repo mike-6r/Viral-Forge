@@ -9,3 +9,6 @@ Owner-only server configuration: `/setup`, `/setup-reset`, `/admin config-check`
 Use `/setup-reset` first with the default `apply_changes: false` to see exactly which legacy ViralForge-managed channels, categories, and roles would be removed. Re-run it with `apply_changes: true` only after reviewing the private preview. It preserves current setup resources, tickets, and unrelated user-created channels.
 
 Existing private operation commands remain under `/viralforge` and `/discovery`. They still require `VIRALFORGE_DISCORD_ALLOWED_ROLE_IDS`; public/community roles do not grant that capability.
+# Operations suite
+
+See `DISCORD_ADMIN_COMMAND_REFERENCE.md` for private business operations controls, and `DISCORD_TICKET_OPERATIONS_GUIDE.md` for state/SLA rules. `/roles` and `/account roles` are limited to opt-in roles; operational and customer roles remain staff-provisioned.

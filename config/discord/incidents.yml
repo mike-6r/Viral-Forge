@@ -1,0 +1,3 @@
+public_channel_key: announcements
+severities: [INFORMATIONAL, MINOR, MAJOR, CRITICAL]
+public_statuses: [INVESTIGATING, IDENTIFIED, MONITORING, RESOLVED]

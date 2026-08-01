@@ -1,0 +1,5 @@
+enabled: true
+rules:
+  rules_accepted: member
+  verified_customer: customer
+  onboarding_completed: member

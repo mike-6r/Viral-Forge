@@ -10,3 +10,11 @@
 | Discord server owner | setup/admin commands | as Discord permits | Existing controls still require the configured operational role boundary |
 
 Tickets deny `@everyone`, permit the requester, and permit only configured staff roles. Private customer and operator categories deny `@everyone` explicitly.
+# Operations additions
+
+| Capability | Public/member | Customer | Staff | Owner |
+| --- | --- | --- | --- | --- |
+| Account dashboard / self roles / appeal | Own records only | Own records only | Own records only | Own records only |
+| Ticket assignment, internal notes, SLA queue | No | No | Yes | Yes |
+| Moderation queue, staff notes, incidents | No | No | Yes | Yes |
+| Setup/reset/configuration | No | No | No | Yes |

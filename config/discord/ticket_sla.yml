@@ -1,0 +1,11 @@
+timezone: UTC
+default:
+  first_response_minutes: 240
+  resolution_minutes: 2880
+  escalation_minutes: 1440
+priorities:
+  low: {multiplier: 1.5}
+  normal: {multiplier: 1.0}
+  high: {multiplier: 0.5}
+  urgent: {multiplier: 0.25}
+  critical: {multiplier: 0.125}

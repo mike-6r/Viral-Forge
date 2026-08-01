@@ -1,0 +1,10 @@
+enabled: true
+trusted_domains: [mxf-labs.com, viralforge.mxf-labs.com, discord.com, discord.gg, youtube.com, youtu.be]
+staff_role_keys: [owner, administrator, operations_lead, content_operator, customer_success, support_team, developer]
+rules:
+  secret_pattern: {enabled: true, action: delete_and_review, threshold: high}
+  discord_invite: {enabled: true, action: delete_and_review, allowed_channel_keys: [general]}
+  excessive_mentions: {enabled: true, max_mentions: 5, action: warn_and_review}
+  repeated_message: {enabled: true, repeats: 3, action: review}
+  suspicious_link: {enabled: true, action: review}
+  spam: {enabled: true, action: review}

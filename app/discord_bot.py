@@ -34,8 +34,11 @@ from app.content_packages.service import (
 from app.discord_business.discord import (
     apply_business_presence,
     business_presence_interval,
+    is_business_staff,
     register_business_commands,
 )
+from app.discord_business.operations import OperationsRepository, scan_message
+from app.discord_business.service import BusinessRepository, load_config
 from app.discovery.models import DiscoveredMedia, DiscoverySource, DiscoveryStatus
 from app.discovery.service import approve_media, reject_media, run_source
 from app.ingestion.storage import LocalFilesystemStorage
@@ -2923,13 +2926,15 @@ class ViralForgeBot(discord.Client):
     def __init__(
         self, repository: ProductionRepository | None = None, settings: Settings | None = None
     ) -> None:
-        super().__init__(intents=discord.Intents(guilds=True))
+        intents = discord.Intents(guilds=True, members=True, message_content=True)
+        super().__init__(intents=intents)
         self.settings, self.repository = (
             settings or get_settings(),
             repository or ProductionRepository(settings),
         )
         self.discovery_repository = DiscoveryRepository(self.settings)
         self._business_presence_task: asyncio.Task[None] | None = None
+        self._automod_recent: dict[tuple[int, int, int], int] = {}
         self.tree = app_commands.CommandTree(self)
         self.tree.add_command(
             app_commands.Group(name="viralforge", description="ViralForge clipping controls")
@@ -3285,6 +3290,65 @@ class ViralForgeBot(discord.Client):
             await self.tree.sync(guild=guild)
         else:
             await self.tree.sync()
+
+    async def on_message(self, message: discord.Message) -> None:
+        """Apply deterministic, redacted safety checks without retaining message bodies."""
+        if message.guild is None or message.author.bot or not isinstance(message.author, discord.Member):
+            return
+        if is_business_staff(message.author):
+            return
+        config = load_config()
+        channel_key = str(getattr(message.channel, "name", "")).replace("-", "_")
+        content_hash = hash(message.content)
+        cache_key = (message.guild.id, message.author.id, content_hash)
+        repeated = self._automod_recent.get(cache_key, 0) >= int(
+            config["automod"]["rules"]["repeated_message"]["repeats"] - 1
+        )
+        self._automod_recent[cache_key] = self._automod_recent.get(cache_key, 0) + 1
+        finding = scan_message(message.content, mention_count=len(message.mentions), repeated=repeated)
+        if finding is None:
+            return
+        if finding.rule_key == "discord_invite" and channel_key in set(
+            config["automod"]["rules"]["discord_invite"].get("allowed_channel_keys", [])
+        ):
+            return
+        deleted = False
+        if finding.action in {"DELETE_AND_REVIEW", "WARN_AND_REVIEW"}:
+            try:
+                await message.delete()
+                deleted = True
+            except discord.Forbidden:
+                pass
+            except discord.NotFound:
+                return
+        session = next(get_session())
+        try:
+            case = OperationsRepository().create_case(session, message.guild.id, message.author.id, finding)
+            session.commit()
+            case_number = case.case_number
+        except Exception:
+            session.rollback()
+            return
+        finally:
+            session.close()
+        with contextlib.suppress(discord.DiscordException):
+            await message.author.send(
+                "Your message was removed or reviewed by ViralForge safety controls. "
+                f"Case #{case_number}. Do not share credentials, tokens, or private URLs in Discord."
+            )
+        session = next(get_session())
+        try:
+            channel_id = BusinessRepository().resource_id(session, message.guild.id, "channel", "operator_alerts")
+        finally:
+            session.close()
+        if channel_id:
+            channel = message.guild.get_channel(channel_id)
+            if isinstance(channel, discord.TextChannel):
+                await channel.send(
+                    f"Automod case #{case_number}: {finding.rule_key}; action {'deleted' if deleted else 'review'}; "
+                    f"member {message.author.mention}. Evidence is redacted.",
+                    allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+                )
 
     async def _rotate_business_presence(self) -> None:
         position = 0

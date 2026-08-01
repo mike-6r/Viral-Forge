@@ -51,6 +51,15 @@ def load_config(root: Path = CONFIG_ROOT) -> dict[str, Any]:
         "onboarding",
         "plans",
         "branding",
+        "automod",
+        "role_panels",
+        "role_sync",
+        "ticket_sla",
+        "ticket_departments",
+        "support_macros",
+        "incidents",
+        "announcements",
+        "dashboards",
     )
     loaded: dict[str, Any] = {}
     for name in required:

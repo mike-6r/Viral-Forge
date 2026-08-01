@@ -1,0 +1,11 @@
+departments:
+  general: General Support
+  technical: Technical Support
+  account_access: Account Access
+  billing: Billing
+  integrations: Platform Integrations
+  bug_report: Bug Reports
+  feature_request: Feature Requests
+  sales: Agency and Enterprise Sales
+  abuse_safety: Abuse and Safety
+  legal_rights: Legal or Rights Concern
