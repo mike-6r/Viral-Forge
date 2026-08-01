@@ -15,7 +15,7 @@
 - Discord roles are not billing truth and do not authorize existing production controls by themselves.
 - Staff dashboards are private and do not expose customer data, media, credentials, or raw moderation evidence.
 - Automated moderation does not automatically kick or ban members.
-- Scheduled announcements and temporary-grant cleanup are persisted and ready for the existing scheduler; only explicitly confirmed announcement publishing is enabled in this bot milestone.
+- Announcement scheduling and automated Discord-side temporary-role removal require a dedicated scheduler-to-Gateway handoff. They are intentionally not enabled yet: drafts and temporary-grant expiry state are persisted, while manual explicit publishing is enabled.
 
 ## Verification
 
