@@ -116,6 +116,26 @@ def test_content_package_is_evidence_bound_versioned_and_never_queues(session): 
     assert len(list(session.scalars(select(ContentPackageVersion)))) == 2
 
 
+def test_content_package_adds_a_conservative_warning_from_persisted_source_title(session):  # type: ignore[no-untyped-def]
+    clip = _rendered_clip(session)
+    project = session.get(ProductionProject, clip.project_id)
+    source = session.get(ProductionSource, project.selected_source_id if project else None)
+    assert project is not None and source is not None
+    project.source_title = "Officer-involved shooting: persisted source title"
+    source.video_title = project.source_title
+    source.warnings = []
+    session.commit()
+
+    queued = request_content_package_generation(session, DEV_ACTOR_ID, clip)
+    package = execute_content_package_generation(session, DEV_ACTOR_ID, queued, settings=Settings())
+
+    assert package.provider_version == "v2"
+    assert package.warnings_json == [
+        "Potentially sensitive content: persisted source title contains 'shooting'; review full context before use."
+    ]
+    assert package.fields_json["sensitive_content_warnings"] == package.warnings_json
+
+
 def test_edit_optimistic_lock_approval_and_regeneration(session):  # type: ignore[no-untyped-def]
     clip = _rendered_clip(session)
     queued = request_content_package_generation(session, DEV_ACTOR_ID, clip)

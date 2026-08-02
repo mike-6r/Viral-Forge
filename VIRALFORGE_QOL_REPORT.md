@@ -2,18 +2,20 @@
 
 Date: 2026-08-02
 
-## Fresh project dashboard after a bot restart
+## Fixed: recovery guidance on project dashboards
 
-- Current behavior: a pre-restart ephemeral project card can show Discord's "didn't respond in time" message after the bot container is recreated.
-- Why it is confusing: the backing project can be healthy while the old card is no longer actionable.
-- Suggested improvement: explicitly state on ephemeral dashboard cards that a post-restart recovery command is `/viralforge project <project_id>`, or expose a non-ephemeral project link where appropriate.
-- Implemented: no. This is a Discord ephemeral-message limitation; the existing fresh slash command successfully recovered the project dashboard.
-- Deferred reason: preserving the current approval-first workflow and avoiding unrelated Discord UX redesign during acceptance testing.
+- Before: a pre-restart ephemeral project card could show Discord's "didn't respond in time" message, leaving an operator unsure how to continue.
+- Improvement: every newly issued guided project card now states the recovery action: use `/viralforge home` to reopen active work after a bot restart.
+- Technical boundary: Discord cannot make an already-expired or pre-restart ephemeral component interactive again. The recovery command creates a fresh, authorized view from persisted project state.
+- Regression: Discord embed test asserts the recovery footer.
 
-## Media-inspection card freshness
+## Fixed: media-inspection card freshness
 
-- Current behavior: an already-issued ephemeral media-quality card retains its queued snapshot after inspection completes.
-- Why it is confusing: the completed inspection exists, but the old card does not refresh itself.
-- Suggested improvement: add a clearly labeled Refresh inspection action or state that the card is a snapshot.
-- Implemented: no.
-- Deferred reason: non-blocking; the persisted inspection completed and the workflow continued safely.
+- Before: an already-issued media-quality card retained its queued snapshot after the worker finished inspection.
+- Improvement: the card now includes **Refresh Status**, which reloads the persisted inspection and replaces the snapshot without re-running analysis.
+- Safety: refresh is read-only; it does not generate a correction, change a clip decision, queue media, or publish anything.
+- Regression: repository and view coverage verify persisted inspection retrieval and the refresh control.
+
+## Current operator workflow
+
+Guided cards retain one stage-specific primary action and consistent **Refresh Status** and **Back to Workspace** navigation. Slow background work is presented as a refreshable state rather than a duplicate action.

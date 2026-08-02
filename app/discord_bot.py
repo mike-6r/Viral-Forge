@@ -958,6 +958,17 @@ class ProductionRepository:
         finally:
             session.close()
 
+    def rendered_media_quality(self, inspection_id: uuid.UUID) -> RenderedMediaInspection:
+        """Load the persisted inspection so a Discord card can refresh its snapshot."""
+        session = next(self._session())
+        try:
+            item = session.get(RenderedMediaInspection, inspection_id)
+            if item is None:
+                raise ProductionError("RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists")
+            return item
+        finally:
+            session.close()
+
     def rendered_media_issues(self, inspection_id: uuid.UUID) -> list[RenderedMediaInspectionIssue]:
         session = next(self._session())
         try:
@@ -2507,6 +2518,20 @@ class MediaQualityView(discord.ui.View):
             return False
         return True
 
+    @discord.ui.button(label="Refresh Status", style=discord.ButtonStyle.secondary)
+    async def refresh_status(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            item = await asyncio.to_thread(self.repository.rendered_media_quality, self.item.id)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            embed=media_quality_embed(item),
+            view=MediaQualityView(item, self.repository, self.settings),
+        )
+
     @discord.ui.button(label="View Issues", style=discord.ButtonStyle.secondary)
     async def issues(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
         if not await self._authorized(interaction):
@@ -2914,6 +2939,12 @@ def content_package_embed(
         value="\n".join(package.uncertainty_json)[:1024] or "Review required.",
         inline=False,
     )
+    if package.warnings_json:
+        embed.add_field(
+            name="Sensitive-content review",
+            value="\n".join(package.warnings_json)[:1024],
+            inline=False,
+        )
     return embed
 
 
@@ -4219,6 +4250,9 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         )
         embed.add_field(name="Progress", value=progress, inline=False)
     embed.add_field(name="Next step", value=next_step, inline=False)
+    embed.set_footer(
+        text="If this card stops responding after a bot restart, use /viralforge home to reopen your active work."
+    )
     return embed
 
 

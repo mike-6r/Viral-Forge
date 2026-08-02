@@ -13,6 +13,7 @@ from app.discord_bot import (
     ContentReadySetupView,
     DiscoveryRepository,
     DiscoverySetupView,
+    MediaQualityView,
     OperatorAccessHelpView,
     OperatorHomeView,
     OpportunityReviewState,
@@ -37,6 +38,7 @@ from app.opportunities.models import (
 from app.producer.models import ProducerRecommendation
 from app.production.models import ProductionClip, ProductionProject
 from app.production.service import ProductionError
+from app.rendered_media.models import RenderedMediaInspection
 
 
 def test_discord_role_settings_and_safe_operational_status():
@@ -223,6 +225,33 @@ def test_guided_project_displays_persisted_download_progress(session: Session, m
     assert "Download" in " ".join(field.name for field in embed.fields)
     assert project.source_url not in values
     assert len(embed.fields) <= 4
+    assert embed.footer.text == (
+        "If this card stops responding after a bot restart, use /viralforge home to reopen your active work."
+    )
+
+
+def test_media_quality_view_can_refresh_a_persisted_inspection(session: Session, monkeypatch):
+    item = RenderedMediaInspection(
+        brand_id=uuid.uuid4(),
+        project_id=uuid.uuid4(),
+        clip_id=uuid.uuid4(),
+        inspection_version=1,
+        status="RUNNING",
+        current_stage="SAMPLE_FRAMES",
+        progress_percent=45.0,
+    )
+    session.add(item)
+    session.commit()
+
+    def session_provider():  # type: ignore[no-untyped-def]
+        yield session
+
+    monkeypatch.setattr("app.discord_bot.get_session", session_provider)
+    repository = ProductionRepository(Settings())
+    current = repository.rendered_media_quality(item.id)
+    view = MediaQualityView(current, repository, Settings(discord_allowed_role_ids="1"))
+    assert current.current_stage == "SAMPLE_FRAMES"
+    assert "Refresh Status" in [child.label for child in view.children]
 
 
 def test_control_center_summarizes_persisted_workflow(session: Session, monkeypatch):
@@ -393,13 +422,14 @@ def test_content_package_review_view_exposes_platform_selection_and_evidence():
         verified_facts_json=["Source URL: persisted"],
         transcript_statements_json=["Persisted transcript statement"],
         uncertainty_json=["Review full context."],
-        warnings_json=[],
+        warnings_json=["Potentially sensitive content: persisted source title contains 'shooting'; review full context before use."],
     )
     repository = ProductionRepository(Settings())
     view = ContentPackageReviewView(package, repository, Settings(discord_allowed_role_ids="1"))
     embed = content_package_embed(package)
     assert len(view.children) == 4
     assert "Persisted transcript statement" in " ".join(field.value for field in embed.fields)
+    assert "Sensitive-content review" in [field.name for field in embed.fields]
 
 
 def test_content_package_review_looks_up_the_package_id(session: Session, monkeypatch):

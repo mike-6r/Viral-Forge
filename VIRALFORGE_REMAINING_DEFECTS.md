@@ -1,17 +1,15 @@
-# ViralForge remaining defects and follow-ups
+# ViralForge remaining limitations
 
 Date: 2026-08-02
 
-## P2: violent-source content-package warning may be empty
+## Discord ephemeral-component lifetime (platform limitation)
 
-The accepted body-camera clip visibly includes a firearm and has a violence-related source title, but its generated local-template content package had zero persisted warnings because the source-quality warning list was empty. The package was otherwise evidence-bound and human-approved.
+Discord cannot revive a component attached to an expired ephemeral message or to a message issued before a bot restart. New guided project cards now provide a `/viralforge home` recovery instruction, and the command reloads persisted project state. This is not a data-loss or workflow blocker.
 
-This is a content-safety quality gap, not a publishing escape: the package remains behind an explicit human publishing decision and no publish request was created. A focused future hardening pass should derive conservative review warnings from persisted analysis evidence and/or explicit operator classification, without inventing facts.
+## Conservative warning scope
 
-## P3: ephemeral Discord cards are restart-sensitive
-
-Old ephemeral cards cannot be resumed after a Discord bot restart. A fresh `/viralforge project <project_id>` command successfully recovered the project in this acceptance run.
+The local content-package provider now raises a review warning only when persisted source metadata contains one of the deliberately narrow high-signal terms: `shooting`, `stabbing`, `homicide`, or `gunfire`. It does not infer sensitive content from ambiguous transcript language or invent an event classification. Human source, rights, moderation, and package review remain required.
 
 ## Preserved VPS-local items
 
-The deploy preserved the pre-existing executable-bit change on `scripts/production/deploy-ip-bootstrap.sh`, protected environment files, the VPS build directory, and unrelated untracked VPS-local files. They were not committed or removed by this acceptance pass.
+The deploy process continues to preserve the existing executable-bit change on `scripts/production/deploy-ip-bootstrap.sh`, protected environment files, the VPS build directory, and unrelated VPS-local untracked files. They are not committed or removed by this hardening pass.

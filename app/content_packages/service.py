@@ -78,6 +78,31 @@ def _source_attribution(context: ContentPackageContext) -> str:
     return "Source: original persisted project source"
 
 
+_SENSITIVE_SOURCE_TITLE_TERMS = (
+    "shooting",
+    "stabbing",
+    "homicide",
+    "gunfire",
+)
+
+
+def _content_warnings(context: ContentPackageContext) -> list[str]:
+    """Return conservative, evidence-labelled review warnings without classifying events."""
+    warnings = list(context.source.warnings if context.source is not None else [])
+    source_titles = [context.project.source_title]
+    if context.source is not None:
+        source_titles.append(context.source.video_title)
+    for title in source_titles:
+        normalized = (title or "").casefold()
+        term = next((value for value in _SENSITIVE_SOURCE_TITLE_TERMS if value in normalized), None)
+        if term is not None:
+            warnings.append(
+                f"Potentially sensitive content: persisted source title contains '{term}'; review full context before use."
+            )
+            break
+    return list(dict.fromkeys(warnings))
+
+
 class LocalTemplateContentPackageProvider:
     """Safe local defaults. Every statement is a label, source fact, or direct transcript text."""
 
@@ -88,7 +113,7 @@ class LocalTemplateContentPackageProvider:
         transcript_label = f'“{_compact(transcript_excerpt, 140)}”' if transcript_excerpt else title
         primary_hook = f"From the source: {transcript_label}"
         hashtags = ["#SourceClip", "#Shorts"]
-        warnings = list(context.source.warnings if context.source is not None else [])
+        warnings = _content_warnings(context)
         if not context.transcript_statements:
             warnings.append("No transcript statement overlaps this rendered clip; review context manually.")
         uncertainty = [
@@ -130,7 +155,7 @@ class LocalTemplateContentPackageProvider:
         return ContentPackageDraft(
             provider_name="local_template",
             model_name="deterministic-template",
-            provider_version="v1",
+            provider_version="v2",
             language=language,
             content_category="SOURCE_CLIP",
             confidence=confidence,

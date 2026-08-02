@@ -12,3 +12,7 @@ Date: 2026-08-02
 ## Release decision
 
 The tested approval-first workflow is ready through **CONTENT_READY**. Public publishing remains intentionally gated by the existing explicit destination and human-decision workflow.
+
+## Production hardening update
+
+The local content-package provider now adds evidence-labeled sensitive-content review warnings for direct high-signal terms in persisted source titles. Discord media-quality cards can refresh their persisted state, and newly issued guided project cards explain the safe post-restart recovery route. These changes are backward-compatible and do not create an upload, schedule, or publish action.
