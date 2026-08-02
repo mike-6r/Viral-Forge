@@ -4,6 +4,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.analysis.models import AnalysisEvent, AnalysisSegment, TranscriptSegment, VideoAnalysis
+from app.brands.models import Brand, BrandMembership, Workspace
 from app.common.config import Settings, get_settings
 from app.content_packages.models import ContentPackage
 from app.discord_bot import (
@@ -88,10 +89,54 @@ def test_persistent_clip_navigation_boundaries_and_missing(session: Session, mon
     assert first_view.previous.disabled and not first_view.next.disabled
     assert last_view.next.disabled and not last_view.previous.disabled
     assert repository.active_review_clips() == [clips[0].id, clips[1].id]
+    clips[0].brand_id = uuid.uuid4()
+    session.commit()
+    project_clip = repository.first_pending_clip_for_project(project_id)
+    assert project_clip is not None and project_clip.clip.id == clips[0].id
     with pytest.raises(ProductionError, match="no clip exists"):
         repository.review_state(first.clip.id, -1)
     with pytest.raises(ProductionError, match="no longer exists"):
         repository.review_state(uuid.uuid4())
+
+
+def test_manual_project_creation_uses_the_selected_brand(session: Session, monkeypatch):
+    workspace = Workspace(name="Selected workspace", slug="selected-workspace")
+    session.add(workspace)
+    session.flush()
+    brand = Brand(
+        workspace_id=workspace.id,
+        name="Selected brand",
+        slug="selected-brand",
+        description=None,
+    )
+    session.add(brand)
+    session.flush()
+    session.add(
+        BrandMembership(
+            brand_id=brand.id,
+            user_id=uuid.UUID("a1111111-1111-1111-1111-111111111111"),
+            role="ADMIN",
+            is_default=True,
+        )
+    )
+    session.commit()
+
+    def session_provider():  # type: ignore[no-untyped-def]
+        yield session
+
+    captured: dict[str, uuid.UUID] = {}
+
+    def create_for_brand(*_: object, brand_id: uuid.UUID, **__: object) -> ProductionProject:
+        captured["brand_id"] = brand_id
+        return ProductionProject(
+            source_url="https://youtu.be/SelectedBrand",
+            created_actor_id=uuid.UUID("a1111111-1111-1111-1111-111111111111"),
+        )
+
+    monkeypatch.setattr("app.discord_bot.get_session", session_provider)
+    monkeypatch.setattr("app.discord_bot.create_project", create_for_brand)
+    ProductionRepository(Settings()).create_project("https://youtu.be/SelectedBrand")
+    assert captured["brand_id"] == brand.id
 
 
 def test_dashboard_compactly_displays_persisted_analysis(session: Session, monkeypatch):

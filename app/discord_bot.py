@@ -236,7 +236,8 @@ class ProductionRepository:
     def create_project(self, url: str) -> ProductionProject:
         session = next(self._session())
         try:
-            return create_project(session, self._actor(session), url)
+            brand = self._default_brand_in_session(session)
+            return create_project(session, self._actor(session), url, brand_id=brand.id)
         finally:
             session.close()
 
@@ -1032,6 +1033,23 @@ class ProductionRepository:
                     ProductionClip.render_status == "SUCCEEDED",
                     ProductionClip.approval_status == "PENDING",
                     ProductionClip.brand_id == brand.id,
+                )
+                .order_by(ProductionClip.created_at)
+            )
+        finally:
+            session.close()
+        return self.review_state(clip_id) if clip_id else None
+
+    def first_pending_clip_for_project(self, project_id: uuid.UUID) -> ReviewState | None:
+        """Return a pending rendered clip for the project already on screen."""
+        session = next(self._session())
+        try:
+            clip_id = session.scalar(
+                select(ProductionClip.id)
+                .where(
+                    ProductionClip.project_id == project_id,
+                    ProductionClip.render_status == "SUCCEEDED",
+                    ProductionClip.approval_status == "PENDING",
                 )
                 .order_by(ProductionClip.created_at)
             )
@@ -3310,7 +3328,9 @@ class GuidedProjectView(discord.ui.View):
             )
             return
         if state.total_clips and state.approved < state.total_clips:
-            pending_clip = await asyncio.to_thread(self.repository.first_pending_clip)
+            pending_clip = await asyncio.to_thread(
+                self.repository.first_pending_clip_for_project, self.project_id
+            )
             if pending_clip is not None:
                 await interaction.response.send_message(
                     embed=clip_embed(pending_clip.clip, pending_clip.total),
