@@ -216,7 +216,10 @@ def test_guided_project_displays_persisted_download_progress(session: Session, m
     monkeypatch.setattr("app.discord_bot.get_session", session_provider)
     embed = guided_project_embed(ProductionRepository(Settings()).dashboard(project.id))
     values = " ".join(field.value for field in embed.fields)
-    assert "45%" in values and "Download progress" in " ".join(field.name for field in embed.fields)
+    assert "45% complete" in values
+    assert "Download" in " ".join(field.name for field in embed.fields)
+    assert project.source_url not in values
+    assert len(embed.fields) <= 4
 
 
 def test_control_center_summarizes_persisted_workflow(session: Session, monkeypatch):
@@ -237,15 +240,13 @@ def test_control_center_summarizes_persisted_workflow(session: Session, monkeypa
     embed = control_center_embed(state)
     assert state.total_projects == 1 and state.source_review_count == 1
     assert state.active_brand_name
-    assert "1 video to review" in " ".join(field.value for field in embed.fields)
-    assert len(OperatorHomeView(repository, Settings()).children) == 6
+    assert "1 source awaiting review" in " ".join(field.value for field in embed.fields)
+    assert len(OperatorHomeView(repository, Settings()).children) == 4
     assert [child.label for child in OperatorHomeView(repository, Settings()).children] == [
-        "Continue Working",
-        "Find Videos",
+        "View Progress",
+        "Find Sources",
         "Add Video",
-        "Review",
-        "Ready To Post",
-        "More",
+        "Workspace Details",
     ]
 
 
@@ -257,17 +258,16 @@ def test_discovery_setup_wizard_has_a_supported_path_and_safe_alternatives():
     )
     select = next(child for child in view.children if hasattr(child, "options"))
     assert [option.label for option in select.options] == [
+        "Manual Video",
         "YouTube Channel",
         "YouTube Playlist",
         "RSS Feed",
         "Website",
-        "Manual Import",
-        "Import Template",
     ]
     assert [child.label for child in view.children if hasattr(child, "label")] == [
         "Continue",
         "Help",
-        "Back",
+        "Back to Workspace",
     ]
 
 
