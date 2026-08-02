@@ -36,4 +36,6 @@ Discord cannot revive an expired or pre-restart ephemeral component. Operators r
 
 ## Deployment notes
 
-The change has no migration. Deploy only the API, worker, scheduler, and Discord services through the active IP-bootstrap Compose profile; preserve `.env.ip-bootstrap`, database volumes, Redis volumes, Caddy, and ports 80/443.
+The change has no migration. It was deployed to the active IP-bootstrap profile in commit `ecbf221` after a PostgreSQL backup. The VPS Alembic upgrade and PostgreSQL `alembic check` completed with no new upgrade operations. API health and readiness returned OK; PostgreSQL and Redis were healthy; Celery ping and task registration succeeded; and Discord reconnected to the gateway. The deployed container also passed the title-evidence warning probe.
+
+Only the API, worker, scheduler, Discord, and migration services were rebuilt or recreated. The protected `.env.ip-bootstrap` file, database and Redis volumes, Caddy, and ports 80/443 were preserved.
