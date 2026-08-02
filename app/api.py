@@ -71,6 +71,37 @@ from app.content_packages.service import (
     edit_content_package,
     request_content_package_generation,
 )
+from app.corrections.models import ClipCorrectionAction, ClipCorrectionPlan
+from app.corrections.service import (
+    CorrectionError,
+)
+from app.corrections.service import (
+    actions as correction_actions,
+)
+from app.corrections.service import (
+    cancel_plan as cancel_correction_plan,
+)
+from app.corrections.service import (
+    comparison as correction_comparison,
+)
+from app.corrections.service import (
+    confirm_plan as confirm_correction_plan,
+)
+from app.corrections.service import (
+    create_plan as create_correction_plan,
+)
+from app.corrections.service import (
+    select_revision as select_correction_revision,
+)
+from app.corrections.service import (
+    set_action_selected as set_correction_action_selected,
+)
+from app.corrections.service import (
+    submit_for_confirmation as submit_correction_plan,
+)
+from app.corrections.service import (
+    validate_plan as validate_correction_plan,
+)
 from app.discovery.models import DiscoveredMedia, DiscoveryRun, DiscoverySource
 from app.discovery.service import DiscoveryError, approve_media, reject_media, run_source
 from app.ingestion.feeds import (
@@ -633,6 +664,45 @@ class RenderedMediaInspectionDecisionRequest(BaseModel):
 class RenderedMediaInspectionNoteRequest(BaseModel):
     expected_version: int = Field(ge=1)
     note: str = Field(min_length=1, max_length=2_000)
+
+
+class CorrectionActionRead(BaseModel):
+    id: uuid.UUID
+    action_type: str
+    start_seconds: float | None
+    end_seconds: float | None
+    proposed_value: dict[str, object]
+    reason: str
+    confidence: float
+    operator_selected: bool
+    model_config = {"from_attributes": True}
+
+
+class CorrectionPlanRead(BaseModel):
+    id: uuid.UUID
+    brand_id: uuid.UUID
+    project_id: uuid.UUID
+    source_clip_id: uuid.UUID
+    source_inspection_id: uuid.UUID
+    plan_version: int
+    status: str
+    summary: str
+    expected_score_improvement: float | None
+    confidence: float
+    result_clip_id: uuid.UUID | None
+    result_inspection_id: uuid.UUID | None
+    review_version: int
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class CorrectionVersionRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+
+
+class CorrectionActionSelectionRequest(CorrectionVersionRequest):
+    selected: bool
 
 
 class VideoAnalysisRead(BaseModel):
@@ -2934,6 +3004,172 @@ def create_app() -> FastAPI:
         require_record_brand(session, actor, item)
         issues = list(session.scalars(select(RenderedMediaInspectionIssue).where(RenderedMediaInspectionIssue.inspection_id == item.id).order_by(RenderedMediaInspectionIssue.start_seconds).limit(100)))
         return {"inspection_version": item.inspection_version, "status": item.status, "stages": {"current": item.current_stage, "progress_percent": item.progress_percent}, "events": [{"issue_type": issue.issue_type, "severity": issue.severity, "start_seconds": issue.start_seconds, "end_seconds": issue.end_seconds, "confidence": issue.confidence} for issue in issues]}
+
+    @app.post("/api/v1/production/clips/{clip_id}/correction-plans", response_model=CorrectionPlanRead, status_code=status.HTTP_201_CREATED)
+    def create_clip_correction_plan(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ClipCorrectionPlan:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        try:
+            return create_correction_plan(session, actor.id, clip)
+        except CorrectionError as exc:
+            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    @app.get("/api/v1/correction-plans/{plan_id}", response_model=CorrectionPlanRead)
+    def get_clip_correction_plan(
+        plan_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ClipCorrectionPlan:
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        return plan
+
+    @app.get("/api/v1/production/clips/{clip_id}/correction-plans", response_model=list[CorrectionPlanRead])
+    def list_clip_correction_plans(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> list[ClipCorrectionPlan]:
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        return list(session.scalars(select(ClipCorrectionPlan).where(ClipCorrectionPlan.source_clip_id == clip.id).order_by(ClipCorrectionPlan.plan_version.desc())))
+
+    @app.get("/api/v1/correction-plans/{plan_id}/actions", response_model=list[CorrectionActionRead])
+    def list_clip_correction_actions(
+        plan_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> list[ClipCorrectionAction]:
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        return correction_actions(session, plan)
+
+    @app.patch("/api/v1/correction-plans/{plan_id}/actions/{action_id}", response_model=CorrectionPlanRead)
+    def select_clip_correction_action(
+        plan_id: uuid.UUID,
+        action_id: uuid.UUID,
+        payload: CorrectionActionSelectionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ClipCorrectionPlan:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        try:
+            return set_correction_action_selected(session, actor.id, plan, action_id, payload.selected, payload.expected_version)
+        except CorrectionError as exc:
+            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    @app.post("/api/v1/correction-plans/{plan_id}/validate")
+    def validate_clip_correction_plan(
+        plan_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, object]:
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        problems = validate_correction_plan(session, plan)
+        return {"valid": not problems, "conflicts": problems, "status": plan.status}
+
+    @app.post("/api/v1/correction-plans/{plan_id}/submit", response_model=CorrectionPlanRead)
+    def submit_clip_correction_plan(
+        plan_id: uuid.UUID,
+        payload: CorrectionVersionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ClipCorrectionPlan:
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        try:
+            return submit_correction_plan(session, actor.id, plan, payload.expected_version)
+        except CorrectionError as exc:
+            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    @app.post("/api/v1/correction-plans/{plan_id}/confirm", response_model=CorrectionPlanRead)
+    def confirm_clip_correction_plan(
+        plan_id: uuid.UUID,
+        payload: CorrectionVersionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ClipCorrectionPlan:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        try:
+            result = confirm_correction_plan(session, actor.id, plan, payload.expected_version)
+        except CorrectionError as exc:
+            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+        from app.worker import render_corrected_clip
+        render_corrected_clip.delay(str(result.id))
+        return result
+
+    @app.post("/api/v1/correction-plans/{plan_id}/cancel", response_model=CorrectionPlanRead)
+    def cancel_clip_correction_plan(
+        plan_id: uuid.UUID,
+        payload: CorrectionVersionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ClipCorrectionPlan:
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        try:
+            return cancel_correction_plan(session, actor.id, plan, payload.expected_version)
+        except CorrectionError as exc:
+            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+
+    @app.get("/api/v1/correction-plans/{plan_id}/comparison")
+    def get_clip_correction_comparison(
+        plan_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, object]:
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        return correction_comparison(session, plan)
+
+    @app.post("/api/v1/correction-plans/{plan_id}/select/{choice}", response_model=ProductionClipRead)
+    def select_clip_correction_revision(
+        plan_id: uuid.UUID,
+        choice: str,
+        payload: CorrectionVersionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ProductionClip:
+        if choice not in {"original", "revised"}:
+            raise HTTPException(status_code=422, detail="choice must be original or revised")
+        plan = session.get(ClipCorrectionPlan, plan_id)
+        if plan is None:
+            raise HTTPException(status_code=404, detail="correction plan not found")
+        require_record_brand(session, actor, plan)
+        try:
+            return select_correction_revision(session, actor.id, plan, choice == "revised", payload.expected_version)
+        except CorrectionError as exc:
+            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
 
     @app.post("/api/v1/media-quality/{inspection_id}/cancel", response_model=RenderedMediaInspectionRead)
     def cancel_rendered_media_quality(

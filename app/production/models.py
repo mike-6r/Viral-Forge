@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import JSON, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -100,6 +100,13 @@ class ProductionClip(UUIDTimestampMixin, Base):
     caption: Mapped[str | None] = mapped_column(Text)
     discord_message_id: Mapped[str | None] = mapped_column(String(50))
     publication_status: Mapped[str] = mapped_column(String(50), default="NOT_QUEUED", index=True)
+    # Revisions are additional immutable clips; the original remains available.
+    root_clip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("production_clips.id"), index=True)
+    parent_clip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("production_clips.id"), index=True)
+    revision_number: Mapped[int] = mapped_column(Integer, default=1)
+    correction_plan_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("clip_correction_plans.id"), index=True)
+    superseded_by_clip_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("production_clips.id"), index=True)
+    is_current_operator_selection: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     __table_args__ = (
         UniqueConstraint("project_id", "clip_number", name="uq_production_clip_number"),
     )

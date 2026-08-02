@@ -8,3 +8,5 @@ From a finished clip in Discord, select **Media Quality**. The first selection q
 - Use the existing **Refresh Preview Link** control to inspect the actual result visually.
 
 Treat low-confidence subtitle, safe-area, and crop findings as a cue to inspect the private preview. Do not use an advisory approval as rights, moderation, content-package, or publish approval.
+
+For a supported technical correction, create a Clip Correction plan. The plan is separate from this advisory inspection: it must be previewed and explicitly confirmed before one immutable revision is rendered and re-inspected.

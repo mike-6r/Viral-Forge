@@ -400,6 +400,17 @@ def inspect_rendered_media(clip_id: str, rerun: bool = False) -> dict[str, str |
         result = execute_inspection(session, actor, item, LocalFilesystemStorage(Path(settings.local_storage_root)), settings=settings)
         if result.status == "COMPLETED":
             build_quality_report(session, actor, clip, rerun=True)
+            # A revision remains independently reviewable even if this inspection
+            # later fails.  Link only completed evidence back to its correction plan.
+            from app.corrections.models import ClipCorrectionPlan, CorrectionPlanStatus
+
+            plans = session.scalars(
+                select(ClipCorrectionPlan).where(ClipCorrectionPlan.result_clip_id == clip.id)
+            )
+            for plan in plans:
+                plan.result_inspection_id = result.id
+                plan.status = CorrectionPlanStatus.COMPLETED
+            session.commit()
         return {"status": result.status, "inspection_version": result.inspection_version, "overall_score": result.overall_score or 0.0}
     finally:
         session.close()
@@ -411,6 +422,27 @@ def cleanup_rendered_inspection_temp() -> dict[str, int | str]:
     from app.rendered_media.service import cleanup_temporary_inspections
 
     return {"status": "ok", "removed": cleanup_temporary_inspections(settings)}
+
+
+@celery_app.task(name="viralforge.render_corrected_clip")
+def render_corrected_clip(plan_id: str) -> dict[str, str]:
+    """Render only a separately confirmed correction plan; never publish or approve it."""
+    from app.corrections.service import CorrectionError, render_confirmed_plan
+    from app.ingestion.storage import LocalFilesystemStorage
+
+    session = next(get_session())
+    try:
+        try:
+            plan = render_confirmed_plan(
+                session, uuid.UUID(plan_id), LocalFilesystemStorage(Path(settings.local_storage_root)), settings
+            )
+        except CorrectionError as exc:
+            return {"status": "failed", "code": exc.code}
+        if plan.result_clip_id:
+            inspect_rendered_media.delay(str(plan.result_clip_id))
+        return {"status": plan.status, "plan_id": str(plan.id)}
+    finally:
+        session.close()
 
 
 @celery_app.task(name="viralforge.evaluate_producer_predictions")

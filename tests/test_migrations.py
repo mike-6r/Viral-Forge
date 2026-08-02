@@ -28,9 +28,9 @@ def test_initial_migration_is_self_contained_and_explicit():
     assert "contentstatus" in source
 
 
-def test_migration_history_has_one_rendered_media_quality_head():
+def test_migration_history_has_one_clip_correction_head():
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["0028_rendered_media_quality"]
+    assert heads == ["0029_clip_correction_workflow"]
 
 
 def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path):
@@ -50,6 +50,8 @@ def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path)
     assert "clip_quality_reports" in inspector.get_table_names()
     assert "rendered_media_inspections" in inspector.get_table_names()
     assert "rendered_media_inspection_issues" in inspector.get_table_names()
+    assert "clip_correction_plans" in inspector.get_table_names()
+    assert "clip_correction_actions" in inspector.get_table_names()
 
 
 def test_schema_hardening_indexes_nullability_and_foreign_keys(tmp_path: Path):

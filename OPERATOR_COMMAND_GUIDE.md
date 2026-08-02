@@ -4,6 +4,10 @@
 
 On a finished clip, use **Media Quality** in Discord. It queues bounded local FFprobe/FFmpeg evidence collection and remains advisory. Use **View Issues** and the private preview, then record an advice decision if useful. It does not change the clip approval or post anything.
 
+## Clip correction
+
+Correction plans are evidence-bound and brand-scoped. Review selected actions, submit the preview, then explicitly confirm rerender. The resulting revised clip remains pending until separately selected and approved; it never creates a package or post automatically.
+
 ## TikTok publishing pilot
 
 1. Finish the HTTPS and TikTok developer prerequisites in [TIKTOK_DEVELOPER_APP_SETUP_GUIDE.md](TIKTOK_DEVELOPER_APP_SETUP_GUIDE.md).

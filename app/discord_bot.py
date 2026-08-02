@@ -32,6 +32,22 @@ from app.content_packages.service import (
     edit_content_package,
     request_content_package_generation,
 )
+from app.corrections.models import ClipCorrectionAction, ClipCorrectionPlan, CorrectionPlanStatus
+from app.corrections.service import (
+    CorrectionError,
+)
+from app.corrections.service import (
+    actions as correction_actions,
+)
+from app.corrections.service import (
+    confirm_plan as confirm_correction_plan,
+)
+from app.corrections.service import (
+    create_plan as create_correction_plan,
+)
+from app.corrections.service import (
+    submit_for_confirmation as submit_correction_plan,
+)
 from app.discord_business.discord import (
     apply_business_presence,
     business_presence_interval,
@@ -947,6 +963,52 @@ class ProductionRepository:
             if item is None:
                 raise ProductionError("RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists")
             return add_rendered_media_note(session, self._actor(session), item, expected_version, note)
+        finally:
+            session.close()
+
+    def correction_plan(self, clip_id: uuid.UUID) -> ClipCorrectionPlan:
+        session = next(self._session())
+        try:
+            clip = session.get(ProductionClip, clip_id)
+            if clip is None:
+                raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
+            return create_correction_plan(session, self._actor(session), clip)
+        except CorrectionError as error:
+            raise ProductionError(error.code, str(error)) from error
+        finally:
+            session.close()
+
+    def correction_plan_actions(self, plan_id: uuid.UUID) -> list[ClipCorrectionAction]:
+        session = next(self._session())
+        try:
+            plan = session.get(ClipCorrectionPlan, plan_id)
+            if plan is None:
+                raise ProductionError("CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists")
+            return correction_actions(session, plan)
+        finally:
+            session.close()
+
+    def submit_correction_plan(self, plan_id: uuid.UUID, expected_version: int) -> ClipCorrectionPlan:
+        session = next(self._session())
+        try:
+            plan = session.get(ClipCorrectionPlan, plan_id)
+            if plan is None:
+                raise ProductionError("CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists")
+            return submit_correction_plan(session, self._actor(session), plan, expected_version)
+        except CorrectionError as error:
+            raise ProductionError(error.code, str(error)) from error
+        finally:
+            session.close()
+
+    def confirm_correction_plan(self, plan_id: uuid.UUID, expected_version: int) -> ClipCorrectionPlan:
+        session = next(self._session())
+        try:
+            plan = session.get(ClipCorrectionPlan, plan_id)
+            if plan is None:
+                raise ProductionError("CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists")
+            return confirm_correction_plan(session, self._actor(session), plan, expected_version)
+        except CorrectionError as error:
+            raise ProductionError(error.code, str(error)) from error
         finally:
             session.close()
 
@@ -2272,6 +2334,21 @@ def media_quality_issue_embed(issue: RenderedMediaInspectionIssue, position: int
     return embed
 
 
+def correction_plan_embed(plan: ClipCorrectionPlan, rows: list[ClipCorrectionAction]) -> discord.Embed:
+    embed = discord.Embed(title="Correction plan preview")
+    selected = [row for row in rows if row.operator_selected]
+    embed.description = (
+        "Review the selected bounded changes. Submitting only prepares confirmation; "
+        "it does not render."
+    )
+    changes = "\n".join(f"• {row.action_type.replace('_', ' ').title()}" for row in selected) or "• Manual review required"
+    embed.add_field(name="Selected corrections", value=changes[:900], inline=False)
+    embed.add_field(name="Status", value=plan.status.replace("_", " ").title())
+    embed.add_field(name="Confidence", value=f"{plan.confidence:.0%}")
+    embed.set_footer(text=f"Plan version {plan.plan_version} · review {plan.review_version}")
+    return embed
+
+
 class MediaQualityNoteModal(discord.ui.Modal, title="Add media-quality note"):
     note: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(label="Operator note", max_length=1_000, style=discord.TextStyle.paragraph)
 
@@ -2370,6 +2447,22 @@ class MediaQualityView(discord.ui.View):
             return
         await interaction.response.edit_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings))
 
+    @discord.ui.button(label="Build Fix Plan", style=discord.ButtonStyle.primary)
+    async def build_fix_plan(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            plan = await asyncio.to_thread(self.repository.correction_plan, self.item.clip_id)
+            rows = await asyncio.to_thread(self.repository.correction_plan_actions, plan.id)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.send_message(
+            embed=correction_plan_embed(plan, rows),
+            view=CorrectionPlanView(plan, rows, self.repository, self.settings),
+            ephemeral=True,
+        )
+
     @discord.ui.button(label="Add Note", style=discord.ButtonStyle.secondary)
     async def note(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
         if await self._authorized(interaction):
@@ -2396,6 +2489,53 @@ class MediaQualityView(discord.ui.View):
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
         await interaction.response.edit_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings))
+
+
+class CorrectionPlanView(discord.ui.View):
+    """Two deliberate clicks: preview/submission, then explicit confirmation."""
+
+    def __init__(self, plan: ClipCorrectionPlan, rows: list[ClipCorrectionAction], repository: ProductionRepository, settings: Settings) -> None:
+        super().__init__(timeout=600)
+        self.plan, self.rows, self.repository, self.settings = plan, rows, repository, settings
+
+    async def _authorized(self, interaction: discord.Interaction) -> bool:
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
+            await interaction.response.send_message(unauthorized_message(), ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="Review Fix Plan", style=discord.ButtonStyle.secondary)
+    async def review(self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]) -> None:
+        if await self._authorized(interaction):
+            await interaction.response.edit_message(embed=correction_plan_embed(self.plan, self.rows), view=self)
+
+    @discord.ui.button(label="Submit for Confirmation", style=discord.ButtonStyle.primary)
+    async def submit(self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            self.plan = await asyncio.to_thread(self.repository.submit_correction_plan, self.plan.id, self.plan.review_version)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.edit_message(embed=correction_plan_embed(self.plan, self.rows), view=self)
+
+    @discord.ui.button(label="Confirm Rerender", style=discord.ButtonStyle.success)
+    async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        if self.plan.status != CorrectionPlanStatus.AWAITING_CONFIRMATION:
+            await interaction.response.send_message("Submit the reviewed plan before confirmation.", ephemeral=True)
+            return
+        try:
+            self.plan = await asyncio.to_thread(self.repository.confirm_correction_plan, self.plan.id, self.plan.review_version)
+            from app.worker import render_corrected_clip
+
+            render_corrected_clip.delay(str(self.plan.id))
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.edit_message(content="Rerender queued. The original remains unchanged; refresh after reinspection.", embed=correction_plan_embed(self.plan, self.rows), view=self)
 
 
 def producer_confidence_label(confidence: float) -> str:
