@@ -71,6 +71,7 @@ class ContentProfile(UUIDTimestampMixin, Base):
     # Configuration only. It never contains credentials or image/frame material.
     rendered_media_inspection_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     clip_correction_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    operations_schedule_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
 class SourceAccount(UUIDTimestampMixin, Base):

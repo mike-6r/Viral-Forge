@@ -15,3 +15,7 @@ Docker uses bounded local log rotation. Application logs redact secret-looking f
 ## TikTok pilot
 
 TikTok is disabled by default. Do not enable it in the IP-bootstrap profile: that deployment intentionally blocks OAuth and public publishing. After a trusted HTTPS hostname and registered TikTok callback are in place, configure the provider through protected environment values, keep `VIRALFORGE_TIKTOK_EMERGENCY_PAUSE=true` until the account is verified, and follow [TIKTOK_PILOT_OPERATIONS_GUIDE.md](TIKTOK_PILOT_OPERATIONS_GUIDE.md). Never place TikTok OAuth values in a Compose file, database field, Discord message, shell history, or log.
+
+## Operations automation
+
+The scheduler runs `viralforge.refresh_operations_state` every five minutes. It assesses each active, non-paused brand and records grouped operator tasks and alerts. It does not send a provider upload, create a publish request, or change publishing configuration. Inspect the selected brand with `/viralforge operations`, and use the existing health, worker, and scheduler checks for infrastructure diagnosis.

@@ -139,6 +139,23 @@ from app.media_preview.service import (
     stream_range,
     validate_grant,
 )
+from app.operations.models import OperationsAlert, OperatorTask
+from app.operations.service import briefing as operations_briefing
+from app.operations.service import (
+    evening_report as operations_evening_report,
+)
+from app.operations.service import (
+    health_summary as operations_health_summary,
+)
+from app.operations.service import (
+    queue_metrics as operations_queue_metrics,
+)
+from app.operations.service import (
+    refresh_operational_state,
+)
+from app.operations.service import (
+    timeline as operations_timeline,
+)
 from app.opportunities.models import (
     ClipOpportunity,
     ClipOpportunityVersion,
@@ -966,6 +983,7 @@ class ContentProfilePatch(BaseModel):
     language: str | None = Field(default=None, max_length=50)
     timezone: str | None = Field(default=None, max_length=100)
     rendered_media_inspection_json: dict[str, object] | None = None
+    operations_schedule_json: dict[str, object] | None = None
 
 
 class ContentProfileRead(ContentProfilePatch):
@@ -3673,6 +3691,82 @@ def create_app() -> FastAPI:
         )
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
         return dict(analytics_dashboard(session, brand.id))
+
+    @app.get("/api/v1/operations/briefing", response_model=dict[str, object])
+    def get_operations_briefing(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        result = operations_briefing(session, brand.id)
+        result["brand"] = brand.name
+        attention = cast(list[OperatorTask], result["attention"])
+        result["attention"] = [{"title": item.title, "priority": item.priority, "action": item.action_label} for item in attention]
+        return result
+
+    @app.get("/api/v1/operations/health", response_model=dict[str, object])
+    def get_operations_health(
+        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return operations_health_summary(session, brand.id)
+
+    @app.get("/api/v1/operations/evening-report", response_model=dict[str, object])
+    def get_operations_evening_report(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        result = operations_evening_report(session, brand.id)
+        result["brand"] = brand.name
+        attention = cast(list[OperatorTask], result["attention"])
+        result["attention"] = [{"title": item.title, "priority": item.priority, "action": item.action_label} for item in attention]
+        return result
+
+    @app.get("/api/v1/operations/queue", response_model=dict[str, object])
+    def get_operations_queue(
+        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return operations_queue_metrics(session, brand.id)
+
+    @app.get("/api/v1/operations/tasks", response_model=list[dict[str, object]])
+    def get_operator_tasks(
+        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+    ) -> list[dict[str, object]]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return [{"title": item.title, "priority": item.priority, "reason": item.reason, "action": item.action_label} for item in session.scalars(select(OperatorTask).where(OperatorTask.brand_id == brand.id, OperatorTask.status == "OPEN").order_by(OperatorTask.priority.desc()).limit(25))]
+
+    @app.get("/api/v1/operations/alerts", response_model=list[dict[str, object]])
+    def get_operations_alerts(
+        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+    ) -> list[dict[str, object]]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return [{"severity": item.severity, "category": item.category, "summary": item.summary, "occurrences": item.occurrences} for item in session.scalars(select(OperationsAlert).where(OperationsAlert.brand_id == brand.id, OperationsAlert.status == "OPEN").order_by(OperationsAlert.last_seen_at.desc()).limit(25))]
+
+    @app.get("/api/v1/operations/timeline", response_model=list[dict[str, object]])
+    def get_operations_timeline(
+        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+    ) -> list[dict[str, object]]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return operations_timeline(session, brand.id)
+
+    @app.post("/api/v1/operations/refresh", response_model=dict[str, object])
+    def refresh_operations(
+        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return refresh_operational_state(session, brand.id)
 
     @app.get("/api/v1/production/queue", response_model=list[ProductionQueueRead])
     def production_queue(

@@ -60,6 +60,23 @@ from app.discovery.models import DiscoveredMedia, DiscoveryRun, DiscoverySource,
 from app.discovery.service import approve_media, reject_media, run_source
 from app.ingestion.storage import LocalFilesystemStorage
 from app.media_preview.service import IssuedPreview, PreviewError, issue_preview
+from app.operations.models import OperationsAlert, OperatorTask
+from app.operations.service import briefing as operations_briefing
+from app.operations.service import (
+    evening_report as operations_evening_report,
+)
+from app.operations.service import (
+    health_summary as operations_health_summary,
+)
+from app.operations.service import (
+    queue_metrics as operations_queue_metrics,
+)
+from app.operations.service import (
+    refresh_operational_state,
+)
+from app.operations.service import (
+    timeline as operations_timeline,
+)
 from app.opportunities.models import (
     ClipOpportunity,
     OpportunityGenerationRun,
@@ -1199,6 +1216,46 @@ class ProductionRepository:
                     )
                 ),
             )
+        finally:
+            session.close()
+
+    def operations_summary(self) -> dict[str, object]:
+        """Return the selected brand's bounded operational data for Discord."""
+        session = next(self._session())
+        try:
+            brand = self._default_brand_in_session(session)
+            briefing = operations_briefing(session, brand.id)
+            return {
+                "brand": brand.name,
+                "briefing": briefing,
+                "evening": operations_evening_report(session, brand.id),
+                "health": operations_health_summary(session, brand.id),
+                "queue": operations_queue_metrics(session, brand.id),
+                "tasks": list(
+                    session.scalars(
+                        select(OperatorTask)
+                        .where(OperatorTask.brand_id == brand.id, OperatorTask.status == "OPEN")
+                        .order_by(OperatorTask.priority.desc())
+                        .limit(5)
+                    )
+                ),
+                "alerts": list(
+                    session.scalars(
+                        select(OperationsAlert)
+                        .where(OperationsAlert.brand_id == brand.id, OperationsAlert.status == "OPEN")
+                        .order_by(OperationsAlert.last_seen_at.desc())
+                        .limit(5)
+                    )
+                ),
+                "timeline": operations_timeline(session, brand.id, limit=5),
+            }
+        finally:
+            session.close()
+
+    def refresh_operations(self) -> dict[str, object]:
+        session = next(self._session())
+        try:
+            return refresh_operational_state(session, self._default_brand_in_session(session).id)
         finally:
             session.close()
 
@@ -4947,6 +5004,41 @@ class AdvancedOperatorView(discord.ui.View):
         brands = await asyncio.to_thread(self.repository.brands)
         await interaction.response.send_message("Choose the brand you are working on.", view=BrandSelectionView(brands, self.repository, self.settings), ephemeral=True)
 
+    @discord.ui.button(label="Operations", style=discord.ButtonStyle.primary)
+    async def operations(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
+        summary = await asyncio.to_thread(self.repository.operations_summary)
+        await interaction.response.send_message(embed=operations_embed(summary), ephemeral=True)
+
+
+def operations_embed(summary: dict[str, object]) -> discord.Embed:
+    """A compact, non-noisy daily operational snapshot."""
+    health = summary["health"]
+    queue = summary["queue"]
+    briefing = summary["briefing"]
+    assert isinstance(health, dict) and isinstance(queue, dict) and isinstance(briefing, dict)
+    color = {
+        "Healthy": VIRALFORGE_SUCCESS,
+        "Attention Needed": VIRALFORGE_WARNING,
+        "Degraded": VIRALFORGE_ERROR,
+        "Critical": VIRALFORGE_ERROR,
+    }.get(str(health["state"]), VIRALFORGE_BLUE)
+    embed = discord.Embed(
+        title=f"Operations · {summary['brand']}",
+        description="Automated checks surface decisions; they never publish content.",
+        color=color,
+    )
+    embed.add_field(name="Brand health", value=f"{health['state']} · {health['score']}/100")
+    embed.add_field(name="Queue health", value=f"{queue['health']} · {queue['ready']} ready")
+    embed.add_field(name="Since yesterday", value=f"{briefing['videos_found']} found · {briefing['rendered']} rendered · {briefing['content_ready']} content-ready", inline=False)
+    tasks = summary["tasks"]
+    if isinstance(tasks, list) and tasks:
+        embed.add_field(name="Tasks", value="\n".join(f"• {task.title}" for task in tasks), inline=False)
+    alerts = summary["alerts"]
+    if isinstance(alerts, list) and alerts:
+        embed.add_field(name="Alerts", value="\n".join(f"• {alert.summary}" for alert in alerts), inline=False)
+    embed.set_footer(text="Use /viralforge review for the next creative decision")
+    return embed
+
 
 class ViralForgeBot(discord.Client):
     def __init__(
@@ -5183,6 +5275,19 @@ class ViralForgeBot(discord.Client):
                 view=OperatorHomeView(self.repository, self.settings, state),
                 ephemeral=True,
             )
+
+        @group.command(name="operations", description="Show the selected brand's daily operations summary")
+        async def operations(interaction: discord.Interaction) -> None:
+            if not isinstance(interaction.user, discord.Member) or not is_authorized(
+                interaction.user, self.settings
+            ):
+                await interaction.response.send_message(
+                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                )
+                return
+            await asyncio.to_thread(self.repository.refresh_operations)
+            summary = await asyncio.to_thread(self.repository.operations_summary)
+            await interaction.response.send_message(embed=operations_embed(summary), ephemeral=True)
 
         @group.command(name="review", description="Open the next item needing your creative decision")
         async def review(interaction: discord.Interaction) -> None:

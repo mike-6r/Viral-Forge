@@ -25,6 +25,7 @@ celery_app.conf.beat_schedule = {
     "refresh-due-tiktok-publish-requests": {"task": "viralforge.refresh_due_tiktok_publish_requests", "schedule": 60},
     "refresh-tiktok-credentials": {"task": "viralforge.refresh_tiktok_credentials", "schedule": 900},
     "poll-due-discovery-sources": {"task": "viralforge.discovery_poll_due_sources", "schedule": 300},
+    "refresh-operations-state": {"task": "viralforge.refresh_operations_state", "schedule": 300},
 }
 
 
@@ -37,6 +38,18 @@ def application_heartbeat() -> dict[str, str]:
 def scheduler_heartbeat() -> dict[str, str]:
     """A bounded Beat heartbeat; scheduler liveness remains visible in worker logs."""
     return {"status": "ok", "service": "viralforge-scheduler"}
+
+
+@celery_app.task(name="viralforge.refresh_operations_state")
+def refresh_operations_state() -> dict[str, int | str]:
+    """Bounded, brand-scoped health and reminder tick; never publishes content."""
+    from app.operations.service import run_due_operations
+
+    session = next(get_session())
+    try:
+        return {"status": "ok", "brands_processed": run_due_operations(session)}
+    finally:
+        session.close()
 
 
 @celery_app.task(name="viralforge.stale_job_detection_preview")
