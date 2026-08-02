@@ -34,6 +34,8 @@ No speculative performance tuning was applied. The prior VPS measurements showed
 
 Discord cannot revive an expired or pre-restart ephemeral component. Operators recover with `/viralforge home`; project state is persisted. The warning detector remains deliberately narrow to avoid inventing content classifications and is not a substitute for the existing human review gates.
 
+The PostgreSQL Alembic check also emits a known SQLAlchemy warning for the existing cyclic foreign-key group among correction plans, media assets, production clips, and rendered-media inspections. It reports no upgrade operations, but future schema work should explicitly review that cycle rather than relying solely on autogeneration for those constraints.
+
 ## Deployment notes
 
 The change has no migration. It was deployed to the active IP-bootstrap profile in commit `ecbf221` after a PostgreSQL backup. The VPS Alembic upgrade and PostgreSQL `alembic check` completed with no new upgrade operations. API health and readiness returned OK; PostgreSQL and Redis were healthy; Celery ping and task registration succeeded; and Discord reconnected to the gateway. The deployed container also passed the title-evidence warning probe.
