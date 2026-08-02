@@ -44,6 +44,44 @@ def _source_for(session: Session, project: ProductionProject) -> ProductionSourc
     return session.get(ProductionSource, project.selected_source_id) if project.selected_source_id else None
 
 
+def _opportunity_confidence(
+    session: Session,
+    analysis: VideoAnalysis,
+    source: ProductionSource | None,
+    opportunity: ClipOpportunity,
+) -> float:
+    """Conservative confidence: a strong opportunity score alone is insufficient."""
+    transcript_confidences = list(
+        session.scalars(
+            select(TranscriptSegment.confidence).where(
+                TranscriptSegment.analysis_id == analysis.id,
+                TranscriptSegment.end_time >= opportunity.start_time,
+                TranscriptSegment.start_time <= opportunity.end_time,
+                TranscriptSegment.confidence.is_not(None),
+            )
+        )
+    )
+    average_transcript = (
+        sum(value for value in transcript_confidences if value is not None)
+        / len(transcript_confidences)
+        if transcript_confidences
+        else 0.0
+    )
+    reason_count = len(
+        list(session.scalars(select(OpportunityReason.id).where(OpportunityReason.opportunity_id == opportunity.id)))
+    )
+    confidence = opportunity.confidence * 100
+    confidence += (average_transcript - 0.5) * 25
+    confidence += min(10.0, reason_count * 3.0)
+    if source is None or source.quality_score < 60:
+        confidence -= 15
+    if source is not None and source.warnings:
+        confidence -= min(20.0, len(source.warnings) * 7.0)
+    if not transcript_confidences:
+        confidence -= 20
+    return _bounded(confidence)
+
+
 def _new_recommendation(
     session: Session,
     *,
@@ -148,9 +186,12 @@ def generate_project_recommendations(session: Session, actor_id: uuid.UUID | Non
         ]
         best = opportunities[0] if opportunities else None
         suggested_count = min(3, len(opportunities))
+        recommendation_confidence = (
+            _opportunity_confidence(session, analysis, source, best) if best is not None else 30.0
+        )
         results.append(_new_recommendation(
             session, brand_id=project.brand_id, project_id=project.id, clip_id=None, content_package_id=None,
-            recommendation_type=ProducerRecommendationType.PROCESS, confidence=80.0 if best else 35.0,
+            recommendation_type=ProducerRecommendationType.PROCESS, confidence=recommendation_confidence if best else 30.0,
             reasoning="Processing readiness is based on completed persisted analysis and the presence of ranked, explainable opportunities.",
             evidence=analysis_evidence, recommendation={"recommendation": "REVIEW_CLIP_STRATEGY" if best else "REQUEST_MORE_CONTEXT", "operator_action_required": True},
             prediction={"metric": "opportunity_count", "predicted_value": suggested_count},
@@ -161,7 +202,7 @@ def generate_project_recommendations(session: Session, actor_id: uuid.UUID | Non
             results.extend([
                 _new_recommendation(
                     session, brand_id=project.brand_id, project_id=project.id, clip_id=None, content_package_id=None,
-                    recommendation_type=ProducerRecommendationType.CLIP_STRATEGY, confidence=best.confidence * 100,
+                    recommendation_type=ProducerRecommendationType.CLIP_STRATEGY, confidence=recommendation_confidence,
                     reasoning="Clip count and selection are recommendations derived from ranked opportunity windows, not an automatic rendering command.",
                     evidence=analysis_evidence + [_evidence("top_opportunity_score", best.overall_score, "Highest persisted opportunity score."), _evidence("opportunity_reasons", reason_names, "Persisted explainable ranking reasons.")],
                     recommendation={"recommended_clip_count": suggested_count, "top_opportunity_id": str(best.id), "operator_action_required": True},
@@ -169,7 +210,7 @@ def generate_project_recommendations(session: Session, actor_id: uuid.UUID | Non
                 ),
                 _new_recommendation(
                     session, brand_id=project.brand_id, project_id=project.id, clip_id=None, content_package_id=None,
-                    recommendation_type=ProducerRecommendationType.CLIP_BOUNDARY, confidence=best.confidence * 100,
+                    recommendation_type=ProducerRecommendationType.CLIP_BOUNDARY, confidence=recommendation_confidence,
                     reasoning="Suggested start and end are the persisted top-ranked opportunity window. Review source context before accepting it.",
                     evidence=analysis_evidence + [_evidence("opportunity_window", {"start": best.start_time, "end": best.end_time}, "Persisted candidate window.")],
                     recommendation={"opportunity_id": str(best.id), "suggested_start_seconds": best.start_time, "suggested_end_seconds": best.end_time, "suggested_duration_seconds": best.duration_seconds, "operator_action_required": True},
@@ -212,7 +253,9 @@ def generate_clip_quality_report(
     hook = _bounded(45 + min(30, transcript_count * 8) + min(20, event_count * 4))
     pacing = _bounded(55 + min(25, event_count * 5) + (10 if 15 <= clip.duration_seconds <= 75 else -10))
     context = _bounded(35 + min(35, transcript_count * 9) + (15 if clip.start_seconds > 0 else 0))
-    subtitle = _bounded(30 + min(60, transcript_count * 12))
+    # The pipeline persists transcript coverage but not visual subtitle-render QA.
+    # Keep this conservative and state the evidence boundary in the report.
+    subtitle = _bounded(20 + min(45, transcript_count * 9))
     metadata = package.fields_json if package is not None else {}
     title = 85.0 if metadata.get("youtube_shorts_title") else 25.0
     caption = 80.0 if metadata.get("tiktok_caption") or metadata.get("instagram_caption") else 25.0
@@ -225,9 +268,9 @@ def generate_clip_quality_report(
         hook_quality=hook, pacing_quality=pacing, context_quality=context, retention_estimate=retention,
         subtitle_quality=subtitle, title_quality=title, caption_quality=caption, hashtag_quality=hashtags,
         overall_readiness=readiness,
-        reasoning="Local producer quality scores are evidence-bound estimates from rendered timing, transcript coverage, analysis events, opportunity score, and persisted content-package fields. They are not predicted performance guarantees.",
+        reasoning="Local producer quality scores are evidence-bound estimates from rendered timing, transcript coverage, analysis events, opportunity score, and persisted content-package fields. Subtitle quality is a transcript-coverage proxy; visual styling and sync require operator review. Retention is a prediction, not a measured metric or performance guarantee.",
         evidence_json=evidence,
-        recommendations_json={"operator_action_required": True, "review_context": context < 60, "review_subtitles": subtitle < 60, "review_metadata": min(title, caption, hashtags) < 60},
+        recommendations_json={"operator_action_required": True, "review_context": context < 60, "review_subtitles": True, "subtitle_quality_limit": "Transcript-coverage proxy only; inspect the rendered clip.", "review_metadata": min(title, caption, hashtags) < 60},
         prediction_json={"retention_estimate": retention, "overall_readiness": readiness},
         provider_name="local_producer", model_name="deterministic-evidence-rules", provider_version="v1",
     )
@@ -329,6 +372,25 @@ def decide_recommendation(session: Session, actor_id: uuid.UUID, item: ProducerR
     item.decision_reason = reason
     item.review_version += 1
     session.add(AuditEvent(actor_id=actor_id, entity_type="producer_recommendation", entity_id=item.id, brand_id=item.brand_id, event_name="producer.recommendation.approved" if approved else "producer.recommendation.rejected", reason=reason, payload={"operator_edits": bool(operator_edits), "pipeline_changed": False}))
+    session.commit()
+    return item
+
+
+def edit_recommendation(
+    session: Session,
+    actor_id: uuid.UUID,
+    item: ProducerRecommendation,
+    expected_version: int,
+    operator_edits: dict[str, object],
+) -> ProducerRecommendation:
+    """Save an operator note without changing the advisory decision state."""
+    if item.review_version != expected_version:
+        raise ProductionError("PRODUCER_RECOMMENDATION_VERSION_CONFLICT", "recommendation changed; reload before editing")
+    if item.status != ProducerRecommendationStatus.PENDING:
+        raise ProductionError("PRODUCER_RECOMMENDATION_NOT_EDITABLE", "only pending recommendations can be edited")
+    item.operator_edit_json = operator_edits
+    item.review_version += 1
+    session.add(AuditEvent(actor_id=actor_id, entity_type="producer_recommendation", entity_id=item.id, brand_id=item.brand_id, event_name="producer.recommendation.edited", payload={"pipeline_changed": False}))
     session.commit()
     return item
 

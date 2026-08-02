@@ -16,6 +16,7 @@ from app.discord_bot import (
     OperatorAccessHelpView,
     OperatorHomeView,
     OpportunityReviewState,
+    ProducerRecommendationView,
     ProductionRepository,
     configured_role_ids,
     content_package_embed,
@@ -24,6 +25,7 @@ from app.discord_bot import (
     guided_project_embed,
     operational_status,
     opportunity_embed,
+    producer_advice_embed,
     run_bot,
 )
 from app.opportunities.models import (
@@ -32,6 +34,7 @@ from app.opportunities.models import (
     OpportunityReason,
     OpportunityReviewStatus,
 )
+from app.producer.models import ProducerRecommendation
 from app.production.models import ProductionClip, ProductionProject
 from app.production.service import ProductionError
 
@@ -429,3 +432,22 @@ def test_content_package_review_looks_up_the_package_id(session: Session, monkey
     repository = ProductionRepository(Settings())
     assert repository.content_package_by_id(package.id) is not None
     assert repository.content_package_for_project(project_id) is not None
+
+
+def test_producer_advice_view_is_concise_and_exposes_review_controls():
+    project_id = uuid.uuid4()
+    item = ProducerRecommendation(
+        brand_id=uuid.uuid4(),
+        project_id=project_id,
+        recommendation_type="SOURCE_TRUST",
+        confidence=0.6,
+        reasoning="Persisted source-quality and watermark inspection support a careful review.",
+        evidence_json=[{"note": "Persisted source-quality score.", "value": 70}],
+        recommendation_json={"recommendation": "REVIEW_SOURCE"},
+    )
+    view = ProducerRecommendationView(project_id, [item], ProductionRepository(Settings()), Settings(discord_allowed_role_ids="1"))
+    labels = {str(getattr(child, "label", "")) for child in view.children}
+    assert {"Approve", "Reject", "Add / Edit Note", "More Details", "Back", "Home"} <= labels
+    embed = producer_advice_embed(item, 0, 1)
+    assert "Moderate (60%)" in next(field.value for field in embed.fields if field.name == "Confidence")
+    assert "id" not in embed.description.lower()

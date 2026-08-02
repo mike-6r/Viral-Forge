@@ -55,7 +55,12 @@ from app.opportunities.service import (
     request_opportunity_generation,
 )
 from app.producer.models import ClipQualityReport, ProducerRecommendation
-from app.producer.service import generate_clip_quality_report, generate_project_recommendations
+from app.producer.service import (
+    decide_recommendation,
+    edit_recommendation,
+    generate_clip_quality_report,
+    generate_project_recommendations,
+)
 from app.production.models import (
     PostingQueueItem,
     ProductionClip,
@@ -845,6 +850,48 @@ class ProductionRepository:
             if project is None:
                 raise ProductionError("PROJECT_NOT_FOUND", "project no longer exists")
             return generate_project_recommendations(session, self._actor(session), project)
+        finally:
+            session.close()
+
+    def pending_producer_recommendations(self, project_id: uuid.UUID) -> list[ProducerRecommendation]:
+        session = next(self._session())
+        try:
+            return list(
+                session.scalars(
+                    select(ProducerRecommendation)
+                    .where(
+                        ProducerRecommendation.project_id == project_id,
+                        ProducerRecommendation.status == "PENDING",
+                    )
+                    .order_by(ProducerRecommendation.created_at)
+                )
+            )
+        finally:
+            session.close()
+
+    def decide_producer_recommendation(
+        self, recommendation_id: uuid.UUID, expected_version: int, approved: bool
+    ) -> ProducerRecommendation:
+        session = next(self._session())
+        try:
+            item = session.get(ProducerRecommendation, recommendation_id)
+            if item is None:
+                raise ProductionError("PRODUCER_RECOMMENDATION_NOT_FOUND", "recommendation no longer exists")
+            return decide_recommendation(session, self._actor(session), item, expected_version, approved)
+        finally:
+            session.close()
+
+    def edit_producer_recommendation(
+        self, recommendation_id: uuid.UUID, expected_version: int, note: str
+    ) -> ProducerRecommendation:
+        session = next(self._session())
+        try:
+            item = session.get(ProducerRecommendation, recommendation_id)
+            if item is None:
+                raise ProductionError("PRODUCER_RECOMMENDATION_NOT_FOUND", "recommendation no longer exists")
+            return edit_recommendation(
+                session, self._actor(session), item, expected_version, {"operator_note": note}
+            )
         finally:
             session.close()
 
@@ -2150,6 +2197,187 @@ def clip_quality_report_embed(report: ClipQualityReport) -> discord.Embed:
     embed.add_field(name="Caption / hashtags", value=f"{report.caption_quality:.0f} / {report.hashtag_quality:.0f}")
     embed.add_field(name="Why", value=report.reasoning[:1024], inline=False)
     return embed
+
+
+def producer_confidence_label(confidence: float) -> str:
+    if confidence >= 0.75:
+        return "High"
+    if confidence >= 0.45:
+        return "Moderate"
+    return "Low"
+
+
+def producer_advice_embed(item: ProducerRecommendation, position: int, total: int) -> discord.Embed:
+    recommendation = item.recommendation_json.get("recommendation", "Review this recommendation.")
+    evidence = item.evidence_json[:2]
+    summary = "\n".join(
+        f"• {str(row.get('note', 'Stored evidence')).replace('Persisted ', '')}" for row in evidence
+    ) or "• Evidence is limited; review the full source context."
+    embed = discord.Embed(title=f"AI Producer advice {position + 1} of {total}")
+    embed.description = str(recommendation).replace("_", " ").title()
+    embed.add_field(
+        name="Confidence",
+        value=f"{producer_confidence_label(item.confidence)} ({item.confidence:.0%})",
+        inline=True,
+    )
+    embed.add_field(name="Why", value=item.reasoning[:600], inline=False)
+    embed.add_field(name="Strongest evidence", value=summary[:700], inline=False)
+    operator_edits = item.operator_edit_json or {}
+    if operator_edits.get("operator_note"):
+        embed.add_field(name="Your note", value=str(operator_edits["operator_note"])[:500], inline=False)
+    embed.set_footer(text="Advice only. Approving or rejecting this does not change the pipeline.")
+    return embed
+
+
+class ProducerNoteModal(discord.ui.Modal, title="Add Producer note"):
+    note: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
+        label="Operator note", max_length=1_000, style=discord.TextStyle.paragraph
+    )
+
+    def __init__(
+        self,
+        item: ProducerRecommendation,
+        repository: ProductionRepository,
+        advice_view: "ProducerRecommendationView",
+    ) -> None:
+        super().__init__()
+        self.item, self.repository, self.advice_view = item, repository, advice_view
+        self.note.default = str((item.operator_edit_json or {}).get("operator_note", ""))
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            updated = await asyncio.to_thread(
+                self.repository.edit_producer_recommendation,
+                self.item.id,
+                self.item.review_version,
+                str(self.note),
+            )
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        self.advice_view.items[self.advice_view.position] = updated
+        await interaction.response.send_message(
+            "Producer note saved. It did not change the project, metadata, queue, or publishing state.",
+            ephemeral=True,
+        )
+
+
+class ProducerRecommendationView(discord.ui.View):
+    def __init__(
+        self,
+        project_id: uuid.UUID,
+        items: list[ProducerRecommendation],
+        repository: ProductionRepository,
+        settings: Settings,
+        position: int = 0,
+    ) -> None:
+        super().__init__(timeout=600)
+        self.project_id, self.items, self.repository, self.settings = project_id, items, repository, settings
+        self.position = min(position, max(0, len(items) - 1))
+        self._apply_state()
+
+    @property
+    def item(self) -> ProducerRecommendation:
+        return self.items[self.position]
+
+    def _apply_state(self) -> None:
+        self.previous.disabled = self.position == 0
+        self.next.disabled = self.position >= len(self.items) - 1
+
+    async def _authorized(self, interaction: discord.Interaction) -> bool:
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
+            await interaction.response.send_message(unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True)
+            return False
+        return True
+
+    async def _refresh_after_decision(self, interaction: discord.Interaction) -> None:
+        pending = await asyncio.to_thread(self.repository.pending_producer_recommendations, self.project_id)
+        if not pending:
+            await interaction.response.edit_message(
+                content="All current Producer advice is reviewed. No project, queue, or publishing state changed.",
+                embed=None,
+                view=None,
+            )
+            return
+        self.items, self.position = pending, 0
+        self._apply_state()
+        await interaction.response.edit_message(
+            content="Advice decision recorded. The next recommendation is ready for review.",
+            embed=producer_advice_embed(self.item, self.position, len(self.items)),
+            view=self,
+        )
+
+    @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
+    async def approve(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            await asyncio.to_thread(self.repository.decide_producer_recommendation, self.item.id, self.item.review_version, True)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await self._refresh_after_decision(interaction)
+
+    @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
+    async def reject(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            await asyncio.to_thread(self.repository.decide_producer_recommendation, self.item.id, self.item.review_version, False)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await self._refresh_after_decision(interaction)
+
+    @discord.ui.button(label="Add / Edit Note", style=discord.ButtonStyle.secondary)
+    async def add_note(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+        if await self._authorized(interaction):
+            await interaction.response.send_modal(ProducerNoteModal(self.item, self.repository, self))
+
+    @discord.ui.button(label="More Details", style=discord.ButtonStyle.secondary)
+    async def details(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        evidence = "\n".join(
+            f"• {row.get('note', 'Evidence')}: {str(row.get('value', 'not available'))[:180]}"
+            for row in self.item.evidence_json[:6]
+        ) or "No additional evidence was stored."
+        await interaction.response.send_message(
+            f"**Detailed evidence**\n{evidence}\n\n**Warning**\nThis is advisory. Review source context before operating the pipeline.",
+            ephemeral=True,
+        )
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.dashboard, self.project_id)
+        view = GuidedProjectView(self.project_id, self.repository, self.settings)
+        view.apply_state(state)
+        await interaction.response.edit_message(content=None, embed=guided_project_embed(state), view=view)
+
+    @discord.ui.button(label="Home", style=discord.ButtonStyle.secondary)
+    async def home(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.control_center)
+        await interaction.response.edit_message(content=None, embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings))
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, row=1)
+    async def previous(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        self.position = max(0, self.position - 1)
+        self._apply_state()
+        await interaction.response.edit_message(embed=producer_advice_embed(self.item, self.position, len(self.items)), view=self)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary, row=1)
+    async def next(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        self.position = min(len(self.items) - 1, self.position + 1)
+        self._apply_state()
+        await interaction.response.edit_message(embed=producer_advice_embed(self.item, self.position, len(self.items)), view=self)
 
 
 def opportunity_embed(state: OpportunityReviewState) -> discord.Embed:
@@ -3674,13 +3902,14 @@ class GuidedProjectView(discord.ui.View):
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        lines = [
-            f"• **{item.recommendation_type.replace('_', ' ').title()}** — {item.confidence:.0%}: {item.recommendation_json.get('recommendation', 'Review recommendation')}"
-            for item in recommendations[:6]
-        ]
-        embed = discord.Embed(title="AI Producer recommendations", description="\n".join(lines) or "No recommendations are available yet.")
-        embed.set_footer(text="Recommendations are stored for review and analytics comparison. They do not change the pipeline.")
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        if not recommendations:
+            await interaction.response.send_message("No Producer advice is available yet.", ephemeral=True)
+            return
+        await interaction.response.send_message(
+            embed=producer_advice_embed(recommendations[0], 0, len(recommendations)),
+            view=ProducerRecommendationView(self.project_id, recommendations, self.repository, self.settings),
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="Refresh Status", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:refresh")
     async def refresh(

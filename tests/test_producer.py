@@ -8,6 +8,7 @@ from app.opportunities.models import ClipOpportunity, OpportunityReason
 from app.producer.models import ClipQualityReport, ProducerRecommendationStatus
 from app.producer.service import (
     decide_recommendation,
+    edit_recommendation,
     generate_clip_quality_report,
     generate_clip_recommendations,
     generate_project_recommendations,
@@ -79,6 +80,11 @@ def test_producer_recommendations_are_evidence_bound_and_advisory(session):  # t
     assert {item.recommendation_type for item in recommendations} >= {"SOURCE_TRUST", "DOWNLOAD", "PROCESS", "CLIP_STRATEGY", "CLIP_BOUNDARY"}
     assert all(item.evidence_json and item.reasoning and 0 <= item.confidence <= 1 for item in recommendations)
     assert session.get(ProductionProject, project.id).status == original_status
+    edited = edit_recommendation(
+        session, DEV_ACTOR_ID, recommendations[1], recommendations[1].review_version, {"operator_note": "Need full context."}
+    )
+    assert edited.status == ProducerRecommendationStatus.PENDING
+    assert edited.operator_edit_json["operator_note"] == "Need full context."
     recommendation = recommendations[0]
     decided = decide_recommendation(session, DEV_ACTOR_ID, recommendation, recommendation.review_version, True, {"note": "operator edit"})
     assert decided.status == ProducerRecommendationStatus.APPROVED

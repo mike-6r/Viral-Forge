@@ -122,6 +122,7 @@ from app.opportunities.service import (
 from app.producer.models import ClipQualityReport, ProducerRecommendation
 from app.producer.service import (
     decide_recommendation,
+    edit_recommendation,
     generate_clip_quality_report,
     generate_clip_recommendations,
     generate_project_recommendations,
@@ -2698,6 +2699,20 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="producer recommendation not found")
         require_record_brand(session, actor, recommendation)
         return decide_recommendation(session, actor.id, recommendation, payload.expected_version, True, payload.operator_edit_json, payload.reason)
+
+    @app.patch("/api/v1/producer/recommendations/{recommendation_id}", response_model=ProducerRecommendationRead)
+    def edit_producer_recommendation(
+        recommendation_id: uuid.UUID,
+        payload: ProducerDecisionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ProducerRecommendation:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        recommendation = session.get(ProducerRecommendation, recommendation_id)
+        if recommendation is None:
+            raise HTTPException(status_code=404, detail="producer recommendation not found")
+        require_record_brand(session, actor, recommendation)
+        return edit_recommendation(session, actor.id, recommendation, payload.expected_version, payload.operator_edit_json)
 
     @app.post("/api/v1/producer/recommendations/{recommendation_id}/reject", response_model=ProducerRecommendationRead)
     def reject_producer_recommendation(
