@@ -395,3 +395,36 @@ def test_content_package_review_view_exposes_platform_selection_and_evidence():
     embed = content_package_embed(package)
     assert len(view.children) == 4
     assert "Persisted transcript statement" in " ".join(field.value for field in embed.fields)
+
+
+def test_content_package_review_looks_up_the_package_id(session: Session, monkeypatch):
+    project_id = uuid.uuid4()
+    package = ContentPackage(
+        clip_id=uuid.uuid4(),
+        project_id=project_id,
+        generation_version=1,
+        status="PENDING",
+        review_version=1,
+        provider_name="local_template",
+        model_name="deterministic-template",
+        provider_version="v1",
+        language="en",
+        content_category="SOURCE_CLIP",
+        confidence=0.7,
+        explanation="Evidence-bound package.",
+        fields_json={},
+        verified_facts_json=[],
+        transcript_statements_json=[],
+        uncertainty_json=[],
+        warnings_json=[],
+    )
+    session.add(package)
+    session.commit()
+
+    def session_provider():  # type: ignore[no-untyped-def]
+        yield session
+
+    monkeypatch.setattr("app.discord_bot.get_session", session_provider)
+    repository = ProductionRepository(Settings())
+    assert repository.content_package_by_id(package.id) is not None
+    assert repository.content_package_for_project(project_id) is not None

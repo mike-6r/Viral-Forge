@@ -807,6 +807,24 @@ class ProductionRepository:
         finally:
             session.close()
 
+    def content_package_by_id(self, package_id: uuid.UUID) -> ContentPackage | None:
+        session = next(self._session())
+        try:
+            return session.get(ContentPackage, package_id)
+        finally:
+            session.close()
+
+    def content_package_for_project(self, project_id: uuid.UUID) -> ContentPackage | None:
+        session = next(self._session())
+        try:
+            return session.scalar(
+                select(ContentPackage)
+                .where(ContentPackage.project_id == project_id)
+                .order_by(ContentPackage.created_at.desc(), ContentPackage.generation_version.desc())
+            )
+        finally:
+            session.close()
+
     def request_content_package(self, clip_id: uuid.UUID, rerun: bool = False) -> ContentPackage:
         session = next(self._session())
         try:
@@ -2154,7 +2172,7 @@ class ContentPackageEditModal(discord.ui.Modal):
         self.add_item(self.value)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        package = await asyncio.to_thread(self.repository.content_package, self.package_id)
+        package = await asyncio.to_thread(self.repository.content_package_by_id, self.package_id)
         if package is None:
             await interaction.response.send_message(
                 "Content package no longer exists.", ephemeral=True
@@ -2201,7 +2219,7 @@ class ContentPackagePlatformSelect(discord.ui.Select["ContentPackageReviewView"]
         view = self.view
         assert isinstance(view, ContentPackageReviewView)
         view.platform_field = self.values[0]
-        package = await asyncio.to_thread(view.repository.content_package, view.package_id)
+        package = await asyncio.to_thread(view.repository.content_package_by_id, view.package_id)
         if package is None:
             await interaction.response.send_message(
                 "Content package no longer exists.", ephemeral=True
@@ -2239,7 +2257,7 @@ class ContentPackageReviewView(discord.ui.View):
     ) -> None:
         if not await self._authorized(interaction):
             return
-        package = await asyncio.to_thread(self.repository.content_package, self.package_id)
+        package = await asyncio.to_thread(self.repository.content_package_by_id, self.package_id)
         if package is None:
             await interaction.response.send_message(
                 "Content package no longer exists.", ephemeral=True
@@ -2255,7 +2273,7 @@ class ContentPackageReviewView(discord.ui.View):
     ) -> None:
         if not await self._authorized(interaction):
             return
-        package = await asyncio.to_thread(self.repository.content_package, self.package_id)
+        package = await asyncio.to_thread(self.repository.content_package_by_id, self.package_id)
         if package is None:
             await interaction.response.send_message(
                 "Content package no longer exists.", ephemeral=True
@@ -2280,7 +2298,7 @@ class ContentPackageReviewView(discord.ui.View):
     ) -> None:
         if not await self._authorized(interaction):
             return
-        package = await asyncio.to_thread(self.repository.content_package, self.package_id)
+        package = await asyncio.to_thread(self.repository.content_package_by_id, self.package_id)
         if package is None:
             await interaction.response.send_message(
                 "Content package no longer exists.", ephemeral=True
@@ -3338,6 +3356,25 @@ class GuidedProjectView(discord.ui.View):
                     ephemeral=True,
                 )
                 return
+        package = await asyncio.to_thread(
+            self.repository.content_package_for_project, self.project_id
+        )
+        if package is not None and package.status == ContentPackageStatus.PENDING:
+            await interaction.response.send_message(
+                embed=content_package_embed(package),
+                view=ContentPackageReviewView(package, self.repository, self.settings),
+                ephemeral=True,
+            )
+            return
+        if package is not None and package.status in {
+            ContentPackageStatus.QUEUED,
+            ContentPackageStatus.GENERATING,
+        }:
+            await interaction.response.send_message(
+                "Content-package suggestions are generating automatically. Refresh this project shortly; no publishing has started.",
+                ephemeral=True,
+            )
+            return
         if state.queued:
             items = await asyncio.to_thread(self.repository.queue)
             await interaction.response.send_message(
