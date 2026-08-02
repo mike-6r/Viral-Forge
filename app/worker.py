@@ -3,6 +3,11 @@ from pathlib import Path
 
 from celery import Celery
 
+# Register correction-plan tables before any task loads ProductionClip.  The
+# production clip model references clip_correction_plans by foreign key, and a
+# clean Celery worker otherwise may configure its mappers before that model is
+# imported.
+import app.corrections.models  # noqa: F401
 from app.common.config import get_settings
 from app.common.db import get_session
 

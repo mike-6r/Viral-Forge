@@ -1,3 +1,4 @@
+from app.common.db import Base
 from app.worker import (
     application_heartbeat,
     audit_cleanup_preview,
@@ -11,6 +12,9 @@ from app.worker import (
 
 
 def test_safe_worker_tasks_are_registered_and_explicit_previews():
+    # The worker must load every table referenced by ProductionClip before a
+    # renderer task configures SQLAlchemy's mapper graph.
+    assert "clip_correction_plans" in Base.metadata.tables
     assert "viralforge.heartbeat" in celery_app.tasks
     assert application_heartbeat() == {"status": "ok", "service": "viralforge-worker"}
     assert stale_job_detection_preview()["status"] == "preview"
