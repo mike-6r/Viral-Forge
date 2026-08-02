@@ -3784,6 +3784,26 @@ class ReviewFoundVideosView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="Set Up TikTok", style=discord.ButtonStyle.primary)
+    async def tiktok(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]
+    ) -> None:
+        if self.settings.deployment_mode.value == "ip_bootstrap":
+            message = (
+                "**TikTok connection requires a trusted HTTPS domain.** ViralForge is currently "
+                "running in temporary IP-bootstrap mode. Configure the HTTPS hostname, registered "
+                "TikTok redirect URI, and external credential reference first. Discord will never ask "
+                "for a TikTok password, token, cookie, or client secret."
+            )
+        else:
+            message = (
+                "**Connect a TikTok account for the active brand**\n"
+                "Use Settings → Publishing Accounts → TikTok to generate a secure OAuth link. "
+                "The destination is brand-owned, defaults to draft upload, and requires a separate "
+                "confirmation before any transfer."
+            )
+        await interaction.response.send_message(message, ephemeral=True)
+
     @discord.ui.button(label="Return Home", style=discord.ButtonStyle.secondary)
     async def home(self, interaction: discord.Interaction, _: discord.ui.Button["ReviewFoundVideosView"]) -> None:
         state = await asyncio.to_thread(self.repository.control_center)

@@ -30,7 +30,7 @@ def test_initial_migration_is_self_contained_and_explicit():
 
 def test_migration_history_has_one_discord_business_head():
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["0024_download_progress"]
+    assert heads == ["0025_tiktok_publishing_provider"]
 
 
 def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path):
@@ -80,7 +80,10 @@ def test_schema_hardening_indexes_nullability_and_foreign_keys(tmp_path: Path):
         for item in inspector.get_foreign_keys("production_projects")
     }
     assert selected_source_foreign_keys[("selected_source_id",)] == "production_sources"
-    command.downgrade(config, "0018_analytics_feedback")
+    # Exercise the new forward-only TikTok revision independently before the
+    # longer base cycle below; existing publishing rows must remain untouched.
+    command.downgrade(config, "0024_download_progress")
+    assert "tiktok_oauth_states" not in inspect(create_engine(database_url(database_path))).get_table_names()
     command.upgrade(config, "head")
     assert check_sqlite_schema(database_path) == []
     command.downgrade(config, "base")

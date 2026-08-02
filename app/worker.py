@@ -21,6 +21,7 @@ celery_app.conf.beat_schedule = {
     "cleanup-expired-media": {"task": "viralforge.cleanup_expired_media", "schedule": settings.cleanup_interval_seconds},
     "refresh-published-analytics": {"task": "viralforge.refresh_published_analytics", "schedule": 3600},
     "execute-due-publish-requests": {"task": "viralforge.execute_due_publish_requests", "schedule": 60},
+    "refresh-due-tiktok-publish-requests": {"task": "viralforge.refresh_due_tiktok_publish_requests", "schedule": 60},
     "poll-due-discovery-sources": {"task": "viralforge.discovery_poll_due_sources", "schedule": 300},
 }
 
@@ -338,6 +339,68 @@ def execute_publish_request(request_id: str) -> dict[str, str | int]:
         }
     finally:
         session.close()
+
+
+@celery_app.task(name="viralforge.execute_tiktok_publish_request")
+def execute_tiktok_publish_request(request_id: str) -> dict[str, str | int]:
+    """Bounded, explicitly-confirmed TikTok transfer; never invoked by approval alone."""
+    from app.publishing.service import PublishingError, execute_tiktok_publish
+
+    session = next(get_session())
+    try:
+        try:
+            request = execute_tiktok_publish(session, uuid.UUID(request_id))
+        except PublishingError as error:
+            return {"status": "blocked", "code": error.code}
+        return {"status": request.status, "request_id": str(request.id), "progress": request.upload_progress_percent}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.refresh_tiktok_publish_status")
+def refresh_tiktok_publish_status(request_id: str) -> dict[str, str | int]:
+    from app.publishing.service import PublishingError, refresh_tiktok_status
+
+    session = next(get_session())
+    try:
+        try:
+            request = refresh_tiktok_status(session, uuid.UUID(request_id))
+        except PublishingError as error:
+            return {"status": "blocked", "code": error.code}
+        return {"status": request.status, "request_id": str(request.id), "progress": request.upload_progress_percent}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.refresh_due_tiktok_publish_requests")
+def refresh_due_tiktok_publish_requests() -> dict[str, int | str]:
+    """One bounded status pass; a scheduler never loops on a remote publish."""
+    from sqlalchemy import select
+
+    from app.publishing.models import PublishRequest, PublishRequestStatus
+    from app.publishing.service import refresh_tiktok_status
+
+    if not settings.tiktok_enabled:
+        return {"status": "disabled", "processed": 0}
+    session = next(get_session())
+    try:
+        requests = list(session.scalars(select(PublishRequest).where(PublishRequest.provider_mode.in_(["DRAFT_UPLOAD", "DIRECT_POST"]), PublishRequest.status.in_([PublishRequestStatus.PROCESSING, PublishRequestStatus.UNKNOWN_REMOTE_OUTCOME])).order_by(PublishRequest.updated_at).limit(10)))
+        for request in requests:
+            try:
+                refresh_tiktok_status(session, request.id)
+            except Exception:  # A single provider error must not stall the bounded scheduler tick.
+                continue
+        return {"status": "ok", "processed": len(requests)}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.refresh_tiktok_credentials")
+def refresh_tiktok_credentials() -> dict[str, int | str]:
+    """Credential refresh has no persistence side effect without a vault adapter."""
+    if not settings.tiktok_enabled:
+        return {"status": "disabled", "refreshed": 0}
+    return {"status": "external_credential_vault_required", "refreshed": 0}
 
 
 @celery_app.task(name="viralforge.execute_due_publish_requests")

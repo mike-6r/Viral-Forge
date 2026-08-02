@@ -14,6 +14,13 @@ class PublishRequestStatus:
     AWAITING_CONFIRMATION = "AWAITING_CONFIRMATION"
     SCHEDULED = "SCHEDULED"
     QUEUED = "QUEUED"
+    INITIALIZING = "INITIALIZING"
+    TRANSFERRING = "TRANSFERRING"
+    PROCESSING = "PROCESSING"
+    DRAFT_READY = "DRAFT_READY"
+    OPERATOR_COMPLETION_REQUIRED = "OPERATOR_COMPLETION_REQUIRED"
+    UNKNOWN_REMOTE_OUTCOME = "UNKNOWN_REMOTE_OUTCOME"
+    MANUAL_RECONCILIATION_REQUIRED = "MANUAL_RECONCILIATION_REQUIRED"
     UPLOADING = "UPLOADING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
@@ -72,6 +79,51 @@ class PublishRequest(UUIDTimestampMixin, Base):
     remote_post_id: Mapped[str | None] = mapped_column(String(255))
     remote_post_url: Mapped[str | None] = mapped_column(String(2048))
     cancelled_before_upload: Mapped[bool] = mapped_column(Boolean, default=False)
+    # These fields are provider-neutral extensions.  They deliberately contain
+    # identifiers and state only; OAuth credentials and upload URLs never enter
+    # this table.
+    provider_mode: Mapped[str | None] = mapped_column(String(50))
+    provider_remote_status: Mapped[str | None] = mapped_column(String(100))
+    provider_upload_session_id: Mapped[str | None] = mapped_column(String(255))
+    provider_settings: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    content_package_generation_version: Mapped[int | None] = mapped_column(Integer)
+    transfer_started_at: Mapped[str | None] = mapped_column(String(64))
+    operator_completion_state: Mapped[str | None] = mapped_column(String(50))
+    reconciliation_reason: Mapped[str | None] = mapped_column(Text)
+
+
+class TikTokOAuthState(UUIDTimestampMixin, Base):
+    """One-time OAuth state.  Only a digest is stored, never the raw value."""
+
+    __tablename__ = "tiktok_oauth_states"
+    __table_args__ = (UniqueConstraint("state_digest", name="uq_tiktok_oauth_state_digest"),)
+
+    brand_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("brands.id"), index=True)
+    destination_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("destination_accounts.id"), index=True)
+    state_digest: Mapped[str] = mapped_column(String(128))
+    requested_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    expires_at: Mapped[str] = mapped_column(String(64), index=True)
+    consumed_at: Mapped[str | None] = mapped_column(String(64))
+
+
+class TikTokCreatorCapability(UUIDTimestampMixin, Base):
+    """Safe creator capabilities captured from TikTok immediately before transfer."""
+
+    __tablename__ = "tiktok_creator_capabilities"
+    __table_args__ = (UniqueConstraint("destination_account_id", name="uq_tiktok_capability_destination"),)
+
+    destination_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("destination_accounts.id"), index=True)
+    brand_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("brands.id"), index=True)
+    creator_identity_reference: Mapped[str] = mapped_column(String(255))
+    creator_username: Mapped[str | None] = mapped_column(String(255))
+    creator_nickname: Mapped[str | None] = mapped_column(String(500))
+    privacy_options: Mapped[list[str]] = mapped_column(JSON, default=list)
+    max_video_duration_seconds: Mapped[int | None] = mapped_column(Integer)
+    comments_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    duet_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    stitch_disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    provider_log_id: Mapped[str | None] = mapped_column(String(255))
+    captured_at: Mapped[str] = mapped_column(String(64), index=True)
 
 
 class PublishAttempt(UUIDTimestampMixin, Base):

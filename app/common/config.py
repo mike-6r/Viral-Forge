@@ -81,9 +81,34 @@ class Settings(BaseSettings):
     storage_critical_threshold_percent: int = Field(default=90, ge=1, le=99)
     storage_emergency_threshold_percent: int = Field(default=97, ge=1, le=100)
     storage_emergency_cleanup_enabled: bool = False
+    # TikTok credentials are always referenced externally.  The legacy raw
+    # client-secret setting remains ignored for compatibility and must not be
+    # used by the publishing provider.
     tiktok_client_id: str | None = None
     tiktok_client_secret: str | None = None
+    tiktok_client_secret_credential_reference: str | None = None
     tiktok_enabled: bool = False
+    tiktok_draft_upload_enabled: bool = False
+    tiktok_direct_post_enabled: bool = False
+    tiktok_public_direct_post_enabled: bool = False
+    tiktok_default_mode: str = "DRAFT_UPLOAD"
+    tiktok_application_review_state: str = "DEVELOPMENT"
+    tiktok_oauth_state_ttl_seconds: int = Field(default=600, ge=60, le=3600)
+    tiktok_oauth_state_secret: str | None = None
+    tiktok_request_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    tiktok_upload_timeout_seconds: int = Field(default=1800, ge=1, le=14400)
+    tiktok_status_poll_interval_seconds: int = Field(default=60, ge=10, le=3600)
+    tiktok_max_status_poll_attempts: int = Field(default=30, ge=1, le=720)
+    tiktok_retry_count: int = Field(default=3, ge=0, le=10)
+    tiktok_retry_backoff_seconds: int = Field(default=60, ge=1, le=3600)
+    tiktok_transfer_chunk_size_bytes: int = Field(default=10_000_000, ge=5_000_000, le=64_000_000)
+    tiktok_max_media_bytes: int = Field(default=4_000_000_000, ge=5_000_000, le=4_000_000_000)
+    tiktok_max_transfers_per_day: int = Field(default=3, ge=1, le=100)
+    tiktok_minimum_transfer_interval_seconds: int = Field(default=300, ge=0, le=86400)
+    tiktok_max_pending_drafts: int = Field(default=5, ge=1, le=100)
+    tiktok_credential_refresh_window_seconds: int = Field(default=86400, ge=60, le=604800)
+    tiktok_emergency_pause: bool = True
+    tiktok_pilot_brand_slug: str | None = None
     youtube_api_key: str | None = None
     youtube_search_max_results: int = Field(default=5, ge=1, le=25)
     youtube_search_default_order: str = "relevance"
@@ -332,6 +357,19 @@ class Settings(BaseSettings):
                 parsed = urlsplit(value)
                 if parsed.scheme != "https" or not parsed.netloc:
                     raise ValueError(f"production {name} requires an HTTPS URL")
+        if self.tiktok_application_review_state not in {"DEVELOPMENT", "UNAUDITED", "AUDITED"}:
+            raise ValueError("TikTok application review state must be DEVELOPMENT, UNAUDITED, or AUDITED")
+        if self.tiktok_default_mode not in {"DRAFT_UPLOAD", "DIRECT_POST"}:
+            raise ValueError("TikTok default mode must be DRAFT_UPLOAD or DIRECT_POST")
+        if self.tiktok_enabled:
+            if not self.tiktok_client_id:
+                raise ValueError("TikTok enabled requires a client key")
+            if not self.tiktok_client_secret_credential_reference:
+                raise ValueError("TikTok enabled requires a client-secret credential reference")
+            if not self.tiktok_oauth_state_secret or len(self.tiktok_oauth_state_secret) < 32:
+                raise ValueError("TikTok enabled requires a strong OAuth state secret")
+        if self.tiktok_public_direct_post_enabled and self.tiktok_application_review_state != "AUDITED":
+            raise ValueError("public TikTok Direct Post requires an AUDITED TikTok application")
         if self.deployment_mode is DeploymentMode.IP_BOOTSTRAP:
             if self.environment is not Environment.PRODUCTION:
                 raise ValueError("ip_bootstrap requires the production environment")

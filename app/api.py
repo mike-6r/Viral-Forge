@@ -140,14 +140,24 @@ from app.publishing.models import (
     PublishingAccountConnection,
     PublishRequest,
     PublishReviewGate,
+    TikTokCreatorCapability,
 )
 from app.publishing.service import (
     PublishingError,
     cancel_publish,
+    complete_tiktok_draft,
     confirm_publish,
+    refresh_tiktok_status,
     request_publish,
+    request_tiktok_publish,
     set_review_gate,
     verify_destination_connection,
+)
+from app.publishing.tiktok import (
+    TikTokPublishingProvider,
+    consume_oauth_state,
+    create_oauth_state,
+    persist_capabilities,
 )
 from app.sources.models import Source, SourcePolicy, SourceStatus, SourceType
 
@@ -860,6 +870,40 @@ class PublishAttemptRead(BaseModel):
     remote_post_url: str | None
     created_at: datetime
     model_config = {"from_attributes": True}
+
+
+class TikTokOAuthStart(BaseModel):
+    destination_account_id: uuid.UUID
+    requested_scopes: list[str] = Field(default_factory=lambda: ["user.info.basic", "video.upload"])
+
+
+class TikTokConnectionStatusRead(DestinationConnectionRead):
+    granted_scopes: list[str] = Field(default_factory=list)
+    application_review_state: str
+
+
+class TikTokCapabilityRead(BaseModel):
+    id: uuid.UUID
+    destination_account_id: uuid.UUID
+    brand_id: uuid.UUID
+    creator_identity_reference: str
+    creator_username: str | None
+    creator_nickname: str | None
+    privacy_options: list[str]
+    max_video_duration_seconds: int | None
+    comments_disabled: bool
+    duet_disabled: bool
+    stitch_disabled: bool
+    captured_at: str
+    model_config = {"from_attributes": True}
+
+
+class TikTokPublishRequestCreate(BaseModel):
+    clip_id: uuid.UUID
+    content_package_id: uuid.UUID
+    destination_account_id: uuid.UUID
+    idempotency_key: str = Field(min_length=8, max_length=255)
+    privacy_level: str | None = Field(default=None, max_length=64)
 
 
 class AnalyticsSnapshotImport(BaseModel):
@@ -2594,6 +2638,138 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="destination account not found")
         require_record_brand(session, actor, account)
         return verify_destination_connection(session, actor.id, account)
+
+    @app.post("/api/v1/publishing/tiktok/oauth/start")
+    def start_tiktok_oauth(
+        payload: TikTokOAuthStart,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, object]:
+        """Create an expiring, brand-bound Login Kit authorization URL."""
+        require_trusted_https_feature()
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        account = session.get(DestinationAccount, payload.destination_account_id)
+        if account is None:
+            raise HTTPException(status_code=404, detail="destination account not found")
+        require_record_brand(session, actor, account)
+        if account.provider.upper() != "TIKTOK":
+            raise HTTPException(status_code=409, detail="TikTok destination account required")
+        state, raw_state = create_oauth_state(session, account, scopes=payload.requested_scopes)
+        return {"authorization_url": TikTokPublishingProvider().authorization_url(raw_state, state.requested_scopes), "expires_at": state.expires_at, "destination_account_id": str(account.id)}
+
+    @app.get("/api/v1/oauth/tiktok/callback")
+    def complete_tiktok_oauth(
+        state: str | None = None,
+        code: str | None = None,
+        error: str | None = None,
+        session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
+    ) -> JSONResponse:
+        """Public state-protected callback.  Tokens never enter persistence or logs."""
+        if error:
+            return JSONResponse(status_code=400, content={"status": "denied", "message": "TikTok authorization was not completed."})
+        if not state or not code:
+            return JSONResponse(status_code=400, content={"status": "invalid", "message": "TikTok callback is missing authorization data."})
+        try:
+            oauth_state = consume_oauth_state(session, state)
+            token_set = TikTokPublishingProvider().exchange_code(code)
+        except PublishingError as exc:
+            return JSONResponse(status_code=400, content={"status": "failed", "code": exc.code, "message": exc.message})
+        connection = session.scalar(select(PublishingAccountConnection).where(PublishingAccountConnection.destination_account_id == oauth_state.destination_account_id))
+        if connection is None:
+            connection = PublishingAccountConnection(destination_account_id=oauth_state.destination_account_id)
+        # OAuth proved the identity and scopes, but the raw token set must be
+        # committed to the configured external credential store by an operator
+        # or a dedicated vault adapter, never into ViralForge's database.
+        connection.connection_state = "CREDENTIAL_REFERENCE_REQUIRED"
+        connection.provider_account_id = token_set.open_id
+        connection.checked_at = datetime.now(UTC).isoformat()
+        connection.last_error_category = "EXTERNAL_CREDENTIAL_REFERENCE_REQUIRED"
+        connection.last_error_summary = "Store the exchanged TikTok token set in the configured external credential reference, then verify the connection."
+        session.add(connection)
+        session.add(AuditEvent(entity_type="destination_account", entity_id=oauth_state.destination_account_id, brand_id=oauth_state.brand_id, event_name="tiktok.oauth.exchange.completed", payload={"scopes": sorted(token_set.scopes)}))
+        session.commit()
+        return JSONResponse(status_code=200, content={"status": "credential_reference_required", "destination_account_id": str(oauth_state.destination_account_id), "granted_scopes": sorted(token_set.scopes), "message": "Authorization succeeded. Finish secure external credential storage, then verify this destination."})
+
+    @app.get("/api/v1/publishing/tiktok/destination-accounts/{account_id}/status", response_model=TikTokConnectionStatusRead)
+    def tiktok_connection_status(
+        account_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> TikTokConnectionStatusRead:
+        account = session.get(DestinationAccount, account_id)
+        if account is None:
+            raise HTTPException(status_code=404, detail="destination account not found")
+        require_record_brand(session, actor, account)
+        connection = session.scalar(select(PublishingAccountConnection).where(PublishingAccountConnection.destination_account_id == account.id))
+        if connection is None:
+            raise HTTPException(status_code=404, detail="TikTok connection not found")
+        scopes: list[str] = []
+        return TikTokConnectionStatusRead.model_validate({**{field: getattr(connection, field) for field in DestinationConnectionRead.model_fields}, "granted_scopes": scopes, "application_review_state": get_settings().tiktok_application_review_state})
+
+    @app.post("/api/v1/publishing/tiktok/destination-accounts/{account_id}/capabilities", response_model=TikTokCapabilityRead)
+    def query_tiktok_capabilities(
+        account_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> TikTokCreatorCapability:
+        require_trusted_https_feature()
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        account = session.get(DestinationAccount, account_id)
+        if account is None:
+            raise HTTPException(status_code=404, detail="destination account not found")
+        require_record_brand(session, actor, account)
+        if account.provider.upper() != "TIKTOK":
+            raise HTTPException(status_code=409, detail="TikTok destination account required")
+        return persist_capabilities(session, account, TikTokPublishingProvider().creator_info(account))
+
+    def _create_tiktok_request(payload: TikTokPublishRequestCreate, mode: str, actor: Actor, session: Session) -> PublishRequest:
+        require_trusted_https_feature()
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        clip, package, destination = session.get(ProductionClip, payload.clip_id), session.get(ContentPackage, payload.content_package_id), session.get(DestinationAccount, payload.destination_account_id)
+        if clip is None or package is None or destination is None:
+            raise HTTPException(status_code=404, detail="clip, content package, or destination account not found")
+        require_record_brand(session, actor, clip)
+        require_record_brand(session, actor, package)
+        require_record_brand(session, actor, destination)
+        return request_tiktok_publish(session, actor.id, clip, package, destination, payload.idempotency_key, mode, payload.privacy_level)
+
+    @app.post("/api/v1/publishing/tiktok/requests/draft", response_model=PublishRequestRead, status_code=status.HTTP_201_CREATED)
+    def create_tiktok_draft_request(payload: TikTokPublishRequestCreate, actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)]) -> PublishRequest:
+        return _create_tiktok_request(payload, "DRAFT_UPLOAD", actor, session)
+
+    @app.post("/api/v1/publishing/tiktok/requests/direct", response_model=PublishRequestRead, status_code=status.HTTP_201_CREATED)
+    def create_tiktok_direct_request(payload: TikTokPublishRequestCreate, actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)]) -> PublishRequest:
+        return _create_tiktok_request(payload, "DIRECT_POST", actor, session)
+
+    @app.post("/api/v1/publishing/tiktok/requests/{request_id}/confirm", response_model=PublishRequestRead)
+    def confirm_tiktok_request(request_id: uuid.UUID, actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)]) -> PublishRequest:
+        request = session.get(PublishRequest, request_id)
+        if request is None:
+            raise HTTPException(status_code=404, detail="publishing request not found")
+        require_record_brand(session, actor, request)
+        if request.provider_mode not in {"DRAFT_UPLOAD", "DIRECT_POST"}:
+            raise HTTPException(status_code=409, detail="TikTok request required")
+        confirmed = confirm_publish(session, actor.id, request)
+        if confirmed.status == "QUEUED":
+            from app.worker import celery_app
+            celery_app.send_task("viralforge.execute_tiktok_publish_request", args=[str(confirmed.id)])
+        return confirmed
+
+    @app.post("/api/v1/publishing/tiktok/requests/{request_id}/refresh", response_model=PublishRequestRead)
+    def refresh_tiktok_request(request_id: uuid.UUID, actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)]) -> PublishRequest:
+        request = session.get(PublishRequest, request_id)
+        if request is None:
+            raise HTTPException(status_code=404, detail="publishing request not found")
+        require_record_brand(session, actor, request)
+        return refresh_tiktok_status(session, request.id)
+
+    @app.post("/api/v1/publishing/tiktok/requests/{request_id}/draft-completion/{outcome}", response_model=PublishRequestRead)
+    def complete_tiktok_draft_request(request_id: uuid.UUID, outcome: str, post_url: str | None = None, actor: Annotated[Actor, Depends(development_actor)] = None, session: Annotated[Session, Depends(get_session)] = None) -> PublishRequest:  # type: ignore[assignment]
+        request = session.get(PublishRequest, request_id)
+        if request is None:
+            raise HTTPException(status_code=404, detail="publishing request not found")
+        require_record_brand(session, actor, request)
+        return complete_tiktok_draft(session, actor.id, request, outcome.upper(), post_url)
 
     @app.post(
         "/api/v1/publishing/clips/{clip_id}/review-gate", response_model=PublishReviewGateRead
