@@ -277,6 +277,11 @@ def render_approved_opportunity(opportunity_id: str) -> dict[str, str]:
             generate_preview_proxy_task.delay(str(clip.id))
         if clip.render_status == "SUCCEEDED":
             generate_clip_quality_report.delay(str(clip.id))
+            # Inspection is opt-in per brand and must never hold up the normal
+            # finished-clip review or mutate its decision state.
+            from app.rendered_media.service import inspection_config
+            if bool(inspection_config(session, clip, settings).get("auto_run")):
+                inspect_rendered_media.delay(str(clip.id))
         return {"status": clip.render_status, "clip_id": str(clip.id)}
     finally:
         session.close()
@@ -372,6 +377,40 @@ def generate_clip_quality_report(clip_id: str) -> dict[str, str | int | float]:
         return {"status": "ok", "clip_id": clip_id, "overall_readiness": report.overall_readiness}
     finally:
         session.close()
+
+
+@celery_app.task(name="viralforge.inspect_rendered_media")
+def inspect_rendered_media(clip_id: str, rerun: bool = False) -> dict[str, str | int | float]:
+    """Inspect a rendered authoritative asset without advancing any workflow."""
+    from sqlalchemy import select
+
+    from app.accounts.models import Role, RoleName, User, UserRole
+    from app.ingestion.storage import LocalFilesystemStorage
+    from app.producer.service import generate_clip_quality_report as build_quality_report
+    from app.production.models import ProductionClip
+    from app.rendered_media.service import execute_inspection, request_inspection
+
+    session = next(get_session())
+    try:
+        actor = session.scalar(select(User.id).join(UserRole, UserRole.user_id == User.id).join(Role, Role.id == UserRole.role_id).where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN])).order_by(User.created_at))
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            return {"status": "not_found", "clip_id": clip_id}
+        item = request_inspection(session, actor, clip, LocalFilesystemStorage(Path(settings.local_storage_root)), rerun=rerun, settings=settings)
+        result = execute_inspection(session, actor, item, LocalFilesystemStorage(Path(settings.local_storage_root)), settings=settings)
+        if result.status == "COMPLETED":
+            build_quality_report(session, actor, clip, rerun=True)
+        return {"status": result.status, "inspection_version": result.inspection_version, "overall_score": result.overall_score or 0.0}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.cleanup_rendered_inspection_temp")
+def cleanup_rendered_inspection_temp() -> dict[str, int | str]:
+    """Remove only stale isolated inspection work directories."""
+    from app.rendered_media.service import cleanup_temporary_inspections
+
+    return {"status": "ok", "removed": cleanup_temporary_inspections(settings)}
 
 
 @celery_app.task(name="viralforge.evaluate_producer_predictions")

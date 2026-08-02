@@ -172,6 +172,15 @@ from app.publishing.tiktok import (
     oauth_code_challenge,
     persist_capabilities,
 )
+from app.rendered_media.models import RenderedMediaInspection, RenderedMediaInspectionIssue
+from app.rendered_media.service import (
+    add_operator_note as add_rendered_media_note,
+)
+from app.rendered_media.service import (
+    cancel_inspection,
+    request_inspection,
+    review_inspection,
+)
 from app.sources.models import Source, SourcePolicy, SourceStatus, SourceType
 
 
@@ -564,6 +573,68 @@ class ClipQualityReportRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class RenderedMediaInspectionRead(BaseModel):
+    id: uuid.UUID
+    brand_id: uuid.UUID
+    project_id: uuid.UUID
+    clip_id: uuid.UUID
+    inspection_version: int
+    provider: str
+    provider_version: str
+    safe_area_profile: str
+    status: str
+    current_stage: str
+    progress_percent: float
+    started_at: datetime | None
+    completed_at: datetime | None
+    failed_at: datetime | None
+    technical_score: float | None
+    visual_score: float | None
+    subtitle_score: float | None
+    audio_score: float | None
+    framing_score: float | None
+    safe_area_score: float | None
+    hook_score: float | None
+    overall_score: float | None
+    confidence: float
+    warnings_json: list[str]
+    summary: str
+    failure_category: str | None
+    review_status: str
+    review_version: int
+    operator_note: str | None
+    decision_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class RenderedMediaInspectionIssueRead(BaseModel):
+    id: uuid.UUID
+    issue_type: str
+    severity: str
+    start_seconds: float | None
+    end_seconds: float | None
+    frame_index: int | None
+    measured_value_json: dict[str, object]
+    expected_range_json: dict[str, object]
+    explanation: str
+    recommendation: str
+    confidence: float
+    created_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class RenderedMediaInspectionDecisionRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    reason: str | None = Field(default=None, max_length=2_000)
+
+
+class RenderedMediaInspectionNoteRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    note: str = Field(min_length=1, max_length=2_000)
+
+
 class VideoAnalysisRead(BaseModel):
     id: uuid.UUID
     project_id: uuid.UUID
@@ -824,6 +895,7 @@ class ContentProfilePatch(BaseModel):
     target_platforms: list[str] | None = None
     language: str | None = Field(default=None, max_length=50)
     timezone: str | None = Field(default=None, max_length=100)
+    rendered_media_inspection_json: dict[str, object] | None = None
 
 
 class ContentProfileRead(ContentProfilePatch):
@@ -2759,6 +2831,161 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="production clip not found")
         require_record_brand(session, actor, clip)
         return list(session.scalars(select(ClipQualityReport).where(ClipQualityReport.clip_id == clip.id).order_by(ClipQualityReport.report_version.desc())))
+
+    @app.post("/api/v1/production/clips/{clip_id}/media-quality", response_model=RenderedMediaInspectionRead, status_code=status.HTTP_202_ACCEPTED)
+    def request_rendered_media_quality(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> RenderedMediaInspection:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        item = request_inspection(session, actor.id, clip, LocalFilesystemStorage(Path(get_settings().local_storage_root)))
+        if item.status == "QUEUED":
+            from app.worker import inspect_rendered_media
+            inspect_rendered_media.delay(str(clip.id))
+        return item
+
+    @app.post("/api/v1/production/clips/{clip_id}/media-quality/rerun", response_model=RenderedMediaInspectionRead, status_code=status.HTTP_202_ACCEPTED)
+    def rerun_rendered_media_quality(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> RenderedMediaInspection:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        item = request_inspection(session, actor.id, clip, LocalFilesystemStorage(Path(get_settings().local_storage_root)), rerun=True)
+        from app.worker import inspect_rendered_media
+        inspect_rendered_media.delay(str(clip.id), rerun=False)
+        return item
+
+    @app.get("/api/v1/production/clips/{clip_id}/media-quality/latest", response_model=RenderedMediaInspectionRead)
+    def latest_rendered_media_quality(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> RenderedMediaInspection:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        item = session.scalar(select(RenderedMediaInspection).where(RenderedMediaInspection.clip_id == clip.id).order_by(RenderedMediaInspection.inspection_version.desc()))
+        if item is None:
+            raise HTTPException(status_code=404, detail="rendered-media inspection not found")
+        return item
+
+    @app.get("/api/v1/production/clips/{clip_id}/media-quality", response_model=list[RenderedMediaInspectionRead])
+    def list_rendered_media_quality(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> list[RenderedMediaInspection]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        return list(session.scalars(select(RenderedMediaInspection).where(RenderedMediaInspection.clip_id == clip.id).order_by(RenderedMediaInspection.inspection_version.desc()).limit(limit)))
+
+    @app.get("/api/v1/media-quality/{inspection_id}/issues", response_model=list[RenderedMediaInspectionIssueRead])
+    def list_rendered_media_issues(
+        inspection_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> list[RenderedMediaInspectionIssue]:
+        item = session.get(RenderedMediaInspection, inspection_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="rendered-media inspection not found")
+        require_record_brand(session, actor, item)
+        return list(session.scalars(select(RenderedMediaInspectionIssue).where(RenderedMediaInspectionIssue.inspection_id == item.id).order_by(RenderedMediaInspectionIssue.start_seconds, RenderedMediaInspectionIssue.created_at).limit(limit)))
+
+    @app.get("/api/v1/media-quality/{inspection_id}/issues/{issue_id}", response_model=RenderedMediaInspectionIssueRead)
+    def get_rendered_media_issue(
+        inspection_id: uuid.UUID,
+        issue_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> RenderedMediaInspectionIssue:
+        item = session.get(RenderedMediaInspection, inspection_id)
+        issue = session.get(RenderedMediaInspectionIssue, issue_id)
+        if item is None or issue is None or issue.inspection_id != item.id:
+            raise HTTPException(status_code=404, detail="rendered-media issue not found")
+        require_record_brand(session, actor, item)
+        return issue
+
+    @app.get("/api/v1/media-quality/{inspection_id}/timeline")
+    def rendered_media_timeline(
+        inspection_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, object]:
+        item = session.get(RenderedMediaInspection, inspection_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="rendered-media inspection not found")
+        require_record_brand(session, actor, item)
+        issues = list(session.scalars(select(RenderedMediaInspectionIssue).where(RenderedMediaInspectionIssue.inspection_id == item.id).order_by(RenderedMediaInspectionIssue.start_seconds).limit(100)))
+        return {"inspection_version": item.inspection_version, "status": item.status, "stages": {"current": item.current_stage, "progress_percent": item.progress_percent}, "events": [{"issue_type": issue.issue_type, "severity": issue.severity, "start_seconds": issue.start_seconds, "end_seconds": issue.end_seconds, "confidence": issue.confidence} for issue in issues]}
+
+    @app.post("/api/v1/media-quality/{inspection_id}/cancel", response_model=RenderedMediaInspectionRead)
+    def cancel_rendered_media_quality(
+        inspection_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> RenderedMediaInspection:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        item = session.get(RenderedMediaInspection, inspection_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="rendered-media inspection not found")
+        require_record_brand(session, actor, item)
+        return cancel_inspection(session, actor.id, item)
+
+    @app.patch("/api/v1/media-quality/{inspection_id}/note", response_model=RenderedMediaInspectionRead)
+    def note_rendered_media_quality(
+        inspection_id: uuid.UUID,
+        payload: RenderedMediaInspectionNoteRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> RenderedMediaInspection:
+        item = session.get(RenderedMediaInspection, inspection_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="rendered-media inspection not found")
+        require_record_brand(session, actor, item)
+        return add_rendered_media_note(session, actor.id, item, payload.expected_version, payload.note)
+
+    @app.post("/api/v1/media-quality/{inspection_id}/approve", response_model=RenderedMediaInspectionRead)
+    def approve_rendered_media_advice(
+        inspection_id: uuid.UUID,
+        payload: RenderedMediaInspectionDecisionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> RenderedMediaInspection:
+        item = session.get(RenderedMediaInspection, inspection_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="rendered-media inspection not found")
+        require_record_brand(session, actor, item)
+        return review_inspection(session, actor.id, item, payload.expected_version, True, payload.reason)
+
+    @app.post("/api/v1/media-quality/{inspection_id}/reject", response_model=RenderedMediaInspectionRead)
+    def reject_rendered_media_advice(
+        inspection_id: uuid.UUID,
+        payload: RenderedMediaInspectionDecisionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> RenderedMediaInspection:
+        item = session.get(RenderedMediaInspection, inspection_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="rendered-media inspection not found")
+        require_record_brand(session, actor, item)
+        return review_inspection(session, actor.id, item, payload.expected_version, False, payload.reason)
 
     @app.post("/api/v1/production/clips/{clip_id}/approve", response_model=ProductionClipRead)
     def approve_production_clip(

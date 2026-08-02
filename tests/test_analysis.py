@@ -1,3 +1,4 @@
+import shutil
 import subprocess
 import uuid
 from pathlib import Path
@@ -149,6 +150,7 @@ def test_analysis_api_queues_and_lists_status(client, session):  # type: ignore[
     assert cancelled.json()["status"] == AnalysisStatus.CANCELLED
 
 
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="FFmpeg/FFprobe are required for the generated media fixture")
 def test_real_local_media_analyzer_detects_bounded_signals(tmp_path):
     video = tmp_path / "controlled.mp4"
     subprocess.run(

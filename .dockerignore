@@ -8,6 +8,5 @@ __pycache__
 *.db
 *.log
 *.egg-info
-tests
 docs
 MILESTONE_*.md

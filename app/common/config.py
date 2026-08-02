@@ -155,6 +155,18 @@ class Settings(BaseSettings):
     video_output_format: str = "mp4"
     ffmpeg_path: str = "ffmpeg"
     ffprobe_path: str = "ffprobe"
+    # Rendered-media inspection is deliberately local and advisory by default.
+    # Automatic inspection remains opt-in per brand profile.
+    rendered_media_inspection_enabled: bool = True
+    rendered_media_inspection_auto_run: bool = False
+    rendered_media_inspection_provider: str = "local_ffmpeg"
+    rendered_media_inspection_safe_area_profile: str = "generic_9_16"
+    rendered_media_inspection_sampling_interval_seconds: float = Field(default=3.0, gt=0, le=60)
+    rendered_media_inspection_max_samples: int = Field(default=30, ge=4, le=120)
+    rendered_media_inspection_timeout_seconds: int = Field(default=300, ge=10, le=3600)
+    rendered_media_inspection_ocr_enabled: bool = False
+    rendered_media_inspection_cv_enabled: bool = False
+    rendered_media_inspection_temp_max_age_seconds: int = Field(default=86400, ge=60, le=604800)
     max_source_duration_seconds: int = Field(default=14_400, ge=1)
     default_clip_duration_seconds: int = Field(default=45, ge=1, le=600)
     min_clip_duration_seconds: int = Field(default=15, ge=1, le=600)

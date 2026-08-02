@@ -17,6 +17,7 @@ import app.producer.models  # noqa: F401
 import app.production.models  # noqa: F401
 import app.publishing.models  # noqa: F401
 import app.ranking.models  # noqa: F401
+import app.rendered_media.models  # noqa: F401
 import app.review.models  # noqa: F401
 import app.rights.models  # noqa: F401
 import app.sources.models  # noqa: F401

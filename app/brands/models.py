@@ -68,6 +68,8 @@ class ContentProfile(UUIDTimestampMixin, Base):
     target_platforms: Mapped[list[str]] = mapped_column(JSON, default=list)
     language: Mapped[str] = mapped_column(String(50), default="und")
     timezone: Mapped[str] = mapped_column(String(100), default="UTC")
+    # Configuration only. It never contains credentials or image/frame material.
+    rendered_media_inspection_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
 
 
 class SourceAccount(UUIDTimestampMixin, Base):

@@ -6,6 +6,7 @@ Use `docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file 
 - Restart one service: `restart worker`. Pause workers: `stop worker`; resume with `up -d worker`.
 - Safely disable discovery, publishing, or analytics by setting the corresponding `VIRALFORGE_*_ENABLED=false` values and recreating API/worker/scheduler. Publishing is disabled by default.
 - Cleanup: `exec worker celery -A app.worker:celery_app call viralforge.cleanup_expired_media --args='[true]'` for dry-run; omit the argument only after review.
+- Rendered-media quality is advisory and disabled for auto-run by default. To remove abandoned isolated inspection work directories, run `exec worker celery -A app.worker:celery_app call viralforge.cleanup_rendered_inspection_temp`. It never deletes durable clips, previews, or issue/audit history.
 - Monitoring: run `scripts/production/monitor.sh` every five minutes from a systemd timer or cron. It checks API health/readiness, PostgreSQL, Redis, worker ping, and scheduler heartbeat. It records only the current critical state in a protected local state file, so an optional `VIRALFORGE_ALERT_WEBHOOK_URL` is notified once per outage and once on recovery rather than on every run. Treat the webhook as a secret; do not add it to source control.
 - Emergency: stop publishing/discovery/workers, revoke preview grants through the authorized API, rotate affected secrets, and disconnect destination accounts. Preserve audit and database records.
 

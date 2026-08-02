@@ -83,6 +83,14 @@ from app.production.service import (
 from app.production.youtube import YouTubeChannel, resolve_youtube_channel
 from app.publishing.models import PublishRequest
 from app.publishing.service import PublishingError, cancel_publish, confirm_publish
+from app.rendered_media.models import RenderedMediaInspection, RenderedMediaInspectionIssue
+from app.rendered_media.service import (
+    add_operator_note as add_rendered_media_note,
+)
+from app.rendered_media.service import (
+    request_inspection,
+    review_inspection,
+)
 
 
 def configured_role_ids(settings: Settings) -> frozenset[int]:
@@ -902,6 +910,43 @@ class ProductionRepository:
             if clip is None:
                 raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
             return generate_clip_quality_report(session, self._actor(session), clip)
+        finally:
+            session.close()
+
+    def media_quality(self, clip_id: uuid.UUID, rerun: bool = False) -> RenderedMediaInspection:
+        session = next(self._session())
+        try:
+            clip = session.get(ProductionClip, clip_id)
+            if clip is None:
+                raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
+            return request_inspection(session, self._actor(session), clip, self._storage(), rerun=rerun, settings=self.settings)
+        finally:
+            session.close()
+
+    def rendered_media_issues(self, inspection_id: uuid.UUID) -> list[RenderedMediaInspectionIssue]:
+        session = next(self._session())
+        try:
+            return list(session.scalars(select(RenderedMediaInspectionIssue).where(RenderedMediaInspectionIssue.inspection_id == inspection_id).order_by(RenderedMediaInspectionIssue.start_seconds, RenderedMediaInspectionIssue.created_at)))
+        finally:
+            session.close()
+
+    def decide_media_quality(self, inspection_id: uuid.UUID, expected_version: int, approved: bool) -> RenderedMediaInspection:
+        session = next(self._session())
+        try:
+            item = session.get(RenderedMediaInspection, inspection_id)
+            if item is None:
+                raise ProductionError("RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists")
+            return review_inspection(session, self._actor(session), item, expected_version, approved)
+        finally:
+            session.close()
+
+    def note_media_quality(self, inspection_id: uuid.UUID, expected_version: int, note: str) -> RenderedMediaInspection:
+        session = next(self._session())
+        try:
+            item = session.get(RenderedMediaInspection, inspection_id)
+            if item is None:
+                raise ProductionError("RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists")
+            return add_rendered_media_note(session, self._actor(session), item, expected_version, note)
         finally:
             session.close()
 
@@ -2199,6 +2244,160 @@ def clip_quality_report_embed(report: ClipQualityReport) -> discord.Embed:
     return embed
 
 
+def media_quality_embed(item: RenderedMediaInspection) -> discord.Embed:
+    embed = discord.Embed(title="Rendered media quality")
+    score = f"{item.overall_score:.0f}/100" if item.overall_score is not None else "Inspecting"
+    embed.description = f"Overall readiness: **{score}** · status: **{item.status.title()}**\nAdvisory only — it does not alter the clip, queue, or publishing."
+    if item.status == "COMPLETED":
+        embed.add_field(name="Technical / visual", value=f"{item.technical_score or 0:.0f} / {item.visual_score or 0:.0f}")
+        embed.add_field(name="Audio / hook", value=f"{item.audio_score or 0:.0f} / {item.hook_score or 0:.0f}")
+        embed.add_field(name="Subtitles / safe area", value=f"{item.subtitle_score or 0:.0f} / {item.safe_area_score or 0:.0f}")
+    embed.add_field(name="Summary", value=(item.summary or "Inspection is queued.")[:800], inline=False)
+    if item.warnings_json:
+        embed.add_field(name="Warnings", value=" · ".join(item.warnings_json)[:600], inline=False)
+    embed.set_footer(text=f"Inspection version {item.inspection_version} · {item.safe_area_profile.replace('_', ' ')}")
+    return embed
+
+
+def media_quality_issue_embed(issue: RenderedMediaInspectionIssue, position: int, total: int) -> discord.Embed:
+    embed = discord.Embed(title=f"Media quality issue {position + 1} of {total}")
+    timeline = "Not tied to one sampled moment"
+    if issue.start_seconds is not None:
+        timeline = f"{issue.start_seconds:.1f}s" + (f"–{issue.end_seconds:.1f}s" if issue.end_seconds is not None else "")
+    embed.add_field(name="Severity", value=issue.severity)
+    embed.add_field(name="Timeline", value=timeline)
+    embed.add_field(name="What was measured", value=issue.explanation[:750], inline=False)
+    embed.add_field(name="Recommended action", value=issue.recommendation[:750], inline=False)
+    embed.set_footer(text=f"Confidence {issue.confidence:.0%} · advisory evidence only")
+    return embed
+
+
+class MediaQualityNoteModal(discord.ui.Modal, title="Add media-quality note"):
+    note: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(label="Operator note", max_length=1_000, style=discord.TextStyle.paragraph)
+
+    def __init__(self, item: RenderedMediaInspection, repository: ProductionRepository) -> None:
+        super().__init__()
+        self.item, self.repository = item, repository
+        self.note.default = item.operator_note or ""
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        try:
+            updated = await asyncio.to_thread(self.repository.note_media_quality, self.item.id, self.item.review_version, str(self.note))
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.edit_message(embed=media_quality_embed(updated), view=MediaQualityView(updated, self.repository, get_settings()))
+
+
+class MediaQualityIssueView(discord.ui.View):
+    def __init__(self, issues: list[RenderedMediaInspectionIssue], position: int = 0) -> None:
+        super().__init__(timeout=600)
+        self.issues, self.position = issues, position
+        self.previous.disabled = position == 0
+        self.next.disabled = position >= len(issues) - 1
+
+    async def _edit(self, interaction: discord.Interaction) -> None:
+        self.previous.disabled = self.position == 0
+        self.next.disabled = self.position >= len(self.issues) - 1
+        await interaction.response.edit_message(embed=media_quality_issue_embed(self.issues[self.position], self.position, len(self.issues)), view=self)
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+    async def previous(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityIssueView"]) -> None:
+        self.position -= 1
+        await self._edit(interaction)
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityIssueView"]) -> None:
+        self.position += 1
+        await self._edit(interaction)
+
+
+class MediaQualityView(discord.ui.View):
+    def __init__(self, item: RenderedMediaInspection, repository: ProductionRepository, settings: Settings) -> None:
+        super().__init__(timeout=600)
+        self.item, self.repository, self.settings = item, repository, settings
+
+    async def _authorized(self, interaction: discord.Interaction) -> bool:
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
+            await interaction.response.send_message(unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True)
+            return False
+        return True
+
+    @discord.ui.button(label="View Issues", style=discord.ButtonStyle.secondary)
+    async def issues(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        rows = await asyncio.to_thread(self.repository.rendered_media_issues, self.item.id)
+        if not rows:
+            await interaction.response.send_message("No material issue rows were recorded. Review the private preview for the stated limitations.", ephemeral=True)
+            return
+        await interaction.response.send_message(embed=media_quality_issue_embed(rows[0], 0, len(rows)), view=MediaQualityIssueView(rows), ephemeral=True)
+
+    @discord.ui.button(label="Open Preview", style=discord.ButtonStyle.secondary)
+    async def preview(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            issued = await asyncio.to_thread(self.repository.create_preview, self.item.clip_id, True)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        view = discord.ui.View(timeout=600)
+        view.add_item(discord.ui.Button(label="Open Preview", style=discord.ButtonStyle.link, url=issued.url))
+        await interaction.response.send_message("Private preview link refreshed for visual review.", view=view, ephemeral=True)
+
+    @discord.ui.button(label="View Timeline", style=discord.ButtonStyle.secondary)
+    async def timeline(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        rows = await asyncio.to_thread(self.repository.rendered_media_issues, self.item.id)
+        if not rows:
+            await interaction.response.send_message("Timeline has no material issue moments. The inspection remains advisory.", ephemeral=True)
+            return
+        moments = "\n".join(f"• {(issue.start_seconds if issue.start_seconds is not None else 0):.1f}s — {issue.issue_type.replace('_', ' ').title()} ({issue.severity.lower()})" for issue in rows[:10])
+        await interaction.response.send_message(f"Inspection timeline\n{moments}", ephemeral=True)
+
+    @discord.ui.button(label="Regenerate", style=discord.ButtonStyle.primary)
+    async def regenerate(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            item = await asyncio.to_thread(self.repository.media_quality, self.item.clip_id, True)
+            from app.worker import inspect_rendered_media
+            inspect_rendered_media.delay(str(item.clip_id))
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.edit_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings))
+
+    @discord.ui.button(label="Add Note", style=discord.ButtonStyle.secondary)
+    async def note(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if await self._authorized(interaction):
+            await interaction.response.send_modal(MediaQualityNoteModal(self.item, self.repository))
+
+    @discord.ui.button(label="Approve Advice", style=discord.ButtonStyle.success)
+    async def approve(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            item = await asyncio.to_thread(self.repository.decide_media_quality, self.item.id, self.item.review_version, True)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.edit_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings))
+
+    @discord.ui.button(label="Reject Advice", style=discord.ButtonStyle.danger)
+    async def reject(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            item = await asyncio.to_thread(self.repository.decide_media_quality, self.item.id, self.item.review_version, False)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.edit_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings))
+
+
 def producer_confidence_label(confidence: float) -> str:
     if confidence >= 0.75:
         return "High"
@@ -2904,6 +3103,24 @@ class ClipReviewView(discord.ui.View):
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
         await interaction.response.send_message(embed=clip_quality_report_embed(report), ephemeral=True)
+
+    @discord.ui.button(
+        label="Media Quality", style=discord.ButtonStyle.secondary, custom_id="viralforge:clip:media-quality"
+    )
+    async def media_quality(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ClipReviewView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            item = await asyncio.to_thread(self.repository.media_quality, self.state.clip.id)
+            if item.status == "QUEUED":
+                from app.worker import inspect_rendered_media
+                inspect_rendered_media.delay(str(self.state.clip.id))
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.send_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings), ephemeral=True)
 
     async def _edit_review(self, interaction: discord.Interaction) -> None:
         self.previous.disabled = self.state.position == 0

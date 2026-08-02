@@ -16,9 +16,9 @@ Review source trust, whether an alternative source is better, process readiness,
 
 ## Finished-clip quality report
 
-From a finished clip choose **Quality Report**. It summarizes hook, pacing, context, transcript-based subtitle coverage, title, caption, hashtags, overall readiness, and a retention prediction.
+From a finished clip choose **Quality Report**. It summarizes hook, pacing, context, transcript-based subtitle coverage, title, caption, hashtags, overall readiness, and a retention prediction. Choose **Media Quality** for a separate inspection of the actual authoritative rendered asset.
 
-Retention is a prediction, not an actual metric. Subtitle quality is a transcript-coverage proxy, so inspect the rendered clip for visual style and synchronization. Use the report to guide the existing review controls, not to bypass them.
+Retention is a prediction, not an actual metric. Subtitle quality is a transcript-coverage proxy unless a completed Media Quality inspection is listed in the evidence. Use the report to guide the existing review controls, not to bypass them.
 
 ## Safe review expectations
 

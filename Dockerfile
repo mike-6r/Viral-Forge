@@ -12,4 +12,8 @@ COPY assets ./assets
 RUN pip install --no-cache-dir .
 COPY alembic ./alembic
 COPY alembic.ini ./
+# Keep verification artifacts available in the same immutable production image.
+# They are only executed by an operator; the runtime command remains the API.
+COPY tests ./tests
+COPY scripts ./scripts
 CMD ["uvicorn", "app.api:app", "--host", "0.0.0.0", "--port", "8000"]

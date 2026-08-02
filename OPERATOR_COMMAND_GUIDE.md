@@ -1,5 +1,9 @@
 # ViralForge operator commands
 
+## Rendered media quality
+
+On a finished clip, use **Media Quality** in Discord. It queues bounded local FFprobe/FFmpeg evidence collection and remains advisory. Use **View Issues** and the private preview, then record an advice decision if useful. It does not change the clip approval or post anything.
+
 ## TikTok publishing pilot
 
 1. Finish the HTTPS and TikTok developer prerequisites in [TIKTOK_DEVELOPER_APP_SETUP_GUIDE.md](TIKTOK_DEVELOPER_APP_SETUP_GUIDE.md).

@@ -22,6 +22,7 @@ from app.producer.models import (
 from app.production.models import ProductionClip, ProductionProject, ProductionSource
 from app.production.service import ProductionError
 from app.publishing.models import PublishReviewGate
+from app.rendered_media.models import RenderedMediaInspection, RenderedMediaInspectionStatus
 
 
 def _bounded(value: float) -> float:
@@ -249,6 +250,16 @@ def generate_clip_quality_report(
         transcript_count = len(list(session.scalars(select(TranscriptSegment.id).where(TranscriptSegment.analysis_id == analysis.id, TranscriptSegment.end_time >= clip.start_seconds, TranscriptSegment.start_time <= clip.end_seconds))))
         event_count = len(list(session.scalars(select(AnalysisEvent.id).where(AnalysisEvent.analysis_id == analysis.id, AnalysisEvent.timestamp >= clip.start_seconds, AnalysisEvent.timestamp <= clip.end_seconds))))
     evidence += [_evidence("transcript_segments", transcript_count, "Transcript coverage overlapping the clip."), _evidence("analysis_events", event_count, "Analysis events inside the clip window.")]
+    inspection = session.scalar(
+        select(RenderedMediaInspection)
+        .where(
+            RenderedMediaInspection.clip_id == clip.id,
+            RenderedMediaInspection.status == RenderedMediaInspectionStatus.COMPLETED,
+        )
+        .order_by(RenderedMediaInspection.inspection_version.desc())
+    )
+    if inspection is not None:
+        evidence.append(_evidence("rendered_media_inspection", {"version": inspection.inspection_version, "overall_score": inspection.overall_score, "confidence": inspection.confidence, "warnings": inspection.warnings_json}, "Actual authoritative rendered-media inspection; distinct from transcript coverage."))
     opportunity_score = opportunity.overall_score if opportunity is not None else 45.0
     hook = _bounded(45 + min(30, transcript_count * 8) + min(20, event_count * 4))
     pacing = _bounded(55 + min(25, event_count * 5) + (10 if 15 <= clip.duration_seconds <= 75 else -10))
@@ -256,21 +267,25 @@ def generate_clip_quality_report(
     # The pipeline persists transcript coverage but not visual subtitle-render QA.
     # Keep this conservative and state the evidence boundary in the report.
     subtitle = _bounded(20 + min(45, transcript_count * 9))
+    if inspection is not None and inspection.subtitle_score is not None:
+        subtitle = inspection.subtitle_score
     metadata = package.fields_json if package is not None else {}
     title = 85.0 if metadata.get("youtube_shorts_title") else 25.0
     caption = 80.0 if metadata.get("tiktok_caption") or metadata.get("instagram_caption") else 25.0
     hashtags = 75.0 if metadata.get("hashtags") else 20.0
     retention = _bounded((hook * 0.45) + (pacing * 0.35) + (context * 0.20) + ((opportunity_score - 50) * 0.12))
     readiness = _bounded((hook + pacing + context + subtitle + title + caption + hashtags) / 7)
+    if inspection is not None and inspection.overall_score is not None:
+        readiness = _bounded(readiness * 0.75 + inspection.overall_score * 0.25)
     report = ClipQualityReport(
         brand_id=clip.brand_id, project_id=clip.project_id, clip_id=clip.id,
         report_version=(latest.report_version + 1) if latest else 1,
         hook_quality=hook, pacing_quality=pacing, context_quality=context, retention_estimate=retention,
         subtitle_quality=subtitle, title_quality=title, caption_quality=caption, hashtag_quality=hashtags,
         overall_readiness=readiness,
-        reasoning="Local producer quality scores are evidence-bound estimates from rendered timing, transcript coverage, analysis events, opportunity score, and persisted content-package fields. Subtitle quality is a transcript-coverage proxy; visual styling and sync require operator review. Retention is a prediction, not a measured metric or performance guarantee.",
+        reasoning="Local producer quality scores are evidence-bound estimates from rendered timing, transcript coverage, analysis events, opportunity score, and persisted content-package fields. Subtitle quality is a transcript-coverage proxy unless rendered-media inspection evidence is listed. Retention is a prediction, not a measured metric or performance guarantee.",
         evidence_json=evidence,
-        recommendations_json={"operator_action_required": True, "review_context": context < 60, "review_subtitles": True, "subtitle_quality_limit": "Transcript-coverage proxy only; inspect the rendered clip.", "review_metadata": min(title, caption, hashtags) < 60},
+        recommendations_json={"operator_action_required": True, "review_context": context < 60, "review_subtitles": True, "subtitle_quality_limit": "Transcript-coverage proxy only unless actual inspection evidence is present.", "rendered_media_inspection_version": inspection.inspection_version if inspection else None, "review_metadata": min(title, caption, hashtags) < 60},
         prediction_json={"retention_estimate": retention, "overall_readiness": readiness},
         provider_name="local_producer", model_name="deterministic-evidence-rules", provider_version="v1",
     )
