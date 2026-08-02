@@ -30,7 +30,7 @@ def test_initial_migration_is_self_contained_and_explicit():
 
 def test_migration_history_has_one_discord_business_head():
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["0023_discord_business_operations"]
+    assert heads == ["0024_download_progress"]
 
 
 def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path):

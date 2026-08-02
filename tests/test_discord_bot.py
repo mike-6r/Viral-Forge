@@ -20,6 +20,7 @@ from app.discord_bot import (
     content_package_embed,
     control_center_embed,
     dashboard_embed,
+    guided_project_embed,
     operational_status,
     opportunity_embed,
     run_bot,
@@ -151,6 +152,26 @@ def test_dashboard_compactly_displays_persisted_analysis(session: Session, monke
     embed = dashboard_embed(ProductionRepository(Settings()).dashboard(project.id))
     values = " ".join(field.value for field in embed.fields)
     assert "COMPLETED" in values and "1 scenes" in values and "2.0s speech" in values
+
+
+def test_guided_project_displays_persisted_download_progress(session: Session, monkeypatch):
+    project = ProductionProject(
+        source_url="https://youtu.be/DownloadProgress",
+        status="DOWNLOADING",
+        download_progress_percent=45,
+        download_progress_stage="DOWNLOADING",
+        created_actor_id=uuid.UUID("a1111111-1111-1111-1111-111111111111"),
+    )
+    session.add(project)
+    session.commit()
+
+    def session_provider():  # type: ignore[no-untyped-def]
+        yield session
+
+    monkeypatch.setattr("app.discord_bot.get_session", session_provider)
+    embed = guided_project_embed(ProductionRepository(Settings()).dashboard(project.id))
+    values = " ".join(field.value for field in embed.fields)
+    assert "45%" in values and "Download progress" in " ".join(field.name for field in embed.fields)
 
 
 def test_control_center_summarizes_persisted_workflow(session: Session, monkeypatch):

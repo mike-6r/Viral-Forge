@@ -5,10 +5,13 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Empty, Queue
+from threading import Thread
 from typing import Protocol
 from urllib.parse import parse_qs, urlsplit
 
@@ -34,6 +37,8 @@ from app.production.source_quality import (
 from app.production.source_resolver import OriginalSourceResolver, ResolvedCandidate
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+PopenRunner = Callable[..., subprocess.Popen[str]]
+_YTDLP_PROGRESS = re.compile(r"\[download\]\s+(?P<percent>\d+(?:\.\d+)?)%")
 
 
 class ProductionError(DomainError):
@@ -79,9 +84,15 @@ def youtube_video_id(url: str) -> str:
 class YtDlpDownloadProvider:
     """An optional local executable provider; it never receives cookies or a shell."""
 
-    def __init__(self, settings: Settings | None = None, runner: Runner = subprocess.run) -> None:
+    def __init__(
+        self,
+        settings: Settings | None = None,
+        runner: Runner = subprocess.run,
+        popen: PopenRunner = subprocess.Popen,
+    ) -> None:
         self.settings = settings or get_settings()
         self.runner = runner
+        self.popen = popen
 
     def command_prefix(self) -> list[str]:
         configured = self.settings.ytdlp_path or self.settings.video_download_executable
@@ -115,13 +126,54 @@ class YtDlpDownloadProvider:
             url,
         ]
         try:
-            completed = self.runner(
-                command,
-                capture_output=True,
-                text=True,
-                timeout=self.settings.video_download_timeout_seconds,
-                check=True,
-            )
+            if progress_callback is None:
+                completed = self.runner(
+                    command,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.settings.video_download_timeout_seconds,
+                    check=True,
+                )
+            else:
+                # --newline emits bounded, parseable yt-dlp progress lines. It
+                # avoids shell execution and keeps provider output out of logs.
+                process = self.popen(
+                    [*command[:-1], "--newline", command[-1]],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                )
+                stdout = process.stdout
+                if stdout is None:
+                    raise OSError("yt-dlp did not provide a progress stream")
+                lines: Queue[str | None] = Queue()
+
+                def _read_output() -> None:
+                    for line in stdout:
+                        lines.put(line)
+                    lines.put(None)
+
+                reader = Thread(target=_read_output, daemon=True)
+                reader.start()
+                deadline = time.monotonic() + self.settings.video_download_timeout_seconds
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        process.kill()
+                        raise subprocess.TimeoutExpired(command, self.settings.video_download_timeout_seconds)
+                    try:
+                        line = lines.get(timeout=min(1.0, remaining))
+                    except Empty:
+                        if process.poll() is None:
+                            continue
+                        line = None
+                    if line is None:
+                        break
+                    progress_callback(line)
+                return_code = process.wait(timeout=max(1.0, deadline - time.monotonic()))
+                if return_code:
+                    raise subprocess.CalledProcessError(return_code, command)
+                completed = subprocess.CompletedProcess(command, return_code)
         except (OSError, subprocess.SubprocessError) as error:
             for candidate in destination.parent.glob(f"{destination.stem}.*"):
                 candidate.unlink(missing_ok=True)
@@ -575,6 +627,8 @@ def attach_authorized_mp4(
         raise
     project.source_duration_seconds = probe.duration_seconds
     project.status = "SOURCE_READY"
+    project.download_progress_percent = 100
+    project.download_progress_stage = "READY"
     # Retention inventory is a compatibility layer: downloading/rendering still
     # owns the authoritative storage key and remains unchanged.
     from app.media_preview.service import ensure_source_asset
@@ -620,6 +674,8 @@ def download_project(
     path = _work_path(project.id, "download", settings)
     source = selected_source(session, project)
     project.status = "DOWNLOADING"
+    project.download_progress_percent = 0
+    project.download_progress_stage = "DOWNLOADING"
     session.add(
         AuditEvent(
             actor_id=actor_id,
@@ -631,7 +687,27 @@ def download_project(
     )
     session.commit()
     try:
-        downloaded = (provider or YtDlpDownloadProvider(settings)).download(source.source_url, path)
+        last_progress = -1
+
+        def report_progress(line: str) -> None:
+            nonlocal last_progress
+            match = _YTDLP_PROGRESS.search(line)
+            if match is None:
+                return
+            percent = max(0, min(100, int(float(match.group("percent")))))
+            if percent == last_progress:
+                return
+            last_progress = percent
+            project.download_progress_percent = percent
+            project.download_progress_stage = "DOWNLOADING"
+            session.commit()
+
+        downloaded = (provider or YtDlpDownloadProvider(settings)).download(
+            source.source_url, path, progress_callback=report_progress
+        )
+        project.download_progress_percent = 100
+        project.download_progress_stage = "VERIFYING"
+        session.commit()
         source.fingerprint_json = {
             **source.fingerprint_json,
             **file_fingerprint(
@@ -659,6 +735,7 @@ def download_project(
         return result
     except ProductionError as error:
         project.status = "DOWNLOAD_FAILED"
+        project.download_progress_stage = "FAILED"
         project.last_error = str(error)
         session.add(
             AuditEvent(

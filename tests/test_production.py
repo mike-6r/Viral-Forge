@@ -1,6 +1,7 @@
 import asyncio
 import json
 import subprocess
+import sys
 import uuid
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from app.common.config import Settings
 from app.production.models import PostingQueueItem, ProductionClip
 from app.production.service import (
     ProductionError,
+    YtDlpDownloadProvider,
     decide_clip,
     ffmpeg_clip_command,
     fixed_segments,
@@ -33,6 +35,33 @@ def test_youtube_url_segments_and_vertical_command(tmp_path):
     )
     with pytest.raises(ProductionError):
         youtube_video_id("https://example.test/video")
+
+
+def test_ytdlp_provider_emits_newline_progress_without_logging_it(tmp_path):
+    destination = tmp_path / "download"
+    progress: list[str] = []
+
+    class Process:
+        stdout = ["[download]   5.0% of 10.00MiB\n", "[download] 100.0% of 10.00MiB\n"]
+
+        def wait(self, timeout: float) -> int:
+            return 0
+
+        def kill(self) -> None:
+            return None
+
+    def popen(*_: object, **__: object) -> Process:
+        destination.with_suffix(".mp4").write_bytes(b"bounded test media")
+        return Process()
+
+    provider = YtDlpDownloadProvider(
+        Settings(video_download_executable=sys.executable), popen=popen  # type: ignore[arg-type]
+    )
+    result = provider.download(
+        "https://www.youtube.com/watch?v=AbCdEf_1234", destination, progress.append
+    )
+    assert result == destination.with_suffix(".mp4")
+    assert progress == ["[download]   5.0% of 10.00MiB\n", "[download] 100.0% of 10.00MiB\n", "completed"]
 
 
 def test_youtube_channel_reference_accepts_only_public_channel_forms():

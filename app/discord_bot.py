@@ -3174,6 +3174,8 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
     source_name = project.source_title or "Your selected video"
     if project.status == "SOURCE_REVIEW_REQUIRED":
         progress, next_step = "Source → Review", "Choose whether to use this video."
+    elif project.status == "DOWNLOADING":
+        progress, next_step = "Source → Downloading", "ViralForge is securely downloading this video."
     elif not project.source_storage_key:
         progress, next_step = "Source → Preparing", "ViralForge is preparing this video automatically."
     elif state.analysis is None or state.analysis.status in {"QUEUED", "RUNNING"}:
@@ -3208,6 +3210,15 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         ),
         inline=True,
     )
+    if project.status == "DOWNLOADING":
+        percent = max(0, min(100, project.download_progress_percent or 0))
+        filled = round(percent / 10)
+        bar = "█" * filled + "░" * (10 - filled)
+        embed.add_field(
+            name="Download progress",
+            value=f"`[{bar}]` **{percent}%**\nRefresh to see the latest download update.",
+            inline=False,
+        )
     milestones = [
         ("Source", project.status != "SOURCE_REVIEW_REQUIRED"),
         ("Downloaded", bool(project.source_storage_key)),

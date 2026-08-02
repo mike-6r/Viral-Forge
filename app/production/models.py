@@ -29,6 +29,8 @@ class ProductionProject(UUIDTimestampMixin, Base):
     source_decision_version: Mapped[int] = mapped_column(Integer, default=1)
     status: Mapped[str] = mapped_column(String(50), default="CREATED", index=True)
     source_storage_key: Mapped[str | None] = mapped_column(String(1_024))
+    download_progress_percent: Mapped[int | None] = mapped_column(Integer)
+    download_progress_stage: Mapped[str | None] = mapped_column(String(50))
     discord_guild_id: Mapped[str | None] = mapped_column(String(50))
     discord_channel_id: Mapped[str | None] = mapped_column(String(50))
     discord_message_id: Mapped[str | None] = mapped_column(String(50))
