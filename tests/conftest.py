@@ -18,9 +18,11 @@ import app.brands.models  # noqa: F401
 import app.content.models  # noqa: F401
 import app.content_packages.models  # noqa: F401
 import app.discord_business.models  # noqa: F401
+import app.discovery.models  # noqa: F401
 import app.ingestion.models  # noqa: F401
 import app.media_preview.models  # noqa: F401
 import app.moderation.models  # noqa: F401
+import app.producer.models  # noqa: F401
 import app.production.models  # noqa: F401
 import app.publishing.models  # noqa: F401
 import app.ranking.models  # noqa: F401

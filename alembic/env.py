@@ -13,6 +13,7 @@ import app.ingestion.models  # noqa: F401
 import app.media_preview.models  # noqa: F401
 import app.moderation.models  # noqa: F401
 import app.opportunities.models  # noqa: F401
+import app.producer.models  # noqa: F401
 import app.production.models  # noqa: F401
 import app.publishing.models  # noqa: F401
 import app.ranking.models  # noqa: F401

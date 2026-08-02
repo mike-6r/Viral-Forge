@@ -119,6 +119,13 @@ from app.opportunities.service import (
     generate_approved_opportunity,
     request_opportunity_generation,
 )
+from app.producer.models import ClipQualityReport, ProducerRecommendation
+from app.producer.service import (
+    decide_recommendation,
+    generate_clip_quality_report,
+    generate_clip_recommendations,
+    generate_project_recommendations,
+)
 from app.production.models import (
     PostingQueueItem,
     ProductionClip,
@@ -496,6 +503,64 @@ class ContentPackageEditRequest(BaseModel):
 class ContentPackageDecisionRequest(BaseModel):
     expected_version: int = Field(ge=1)
     reason: str | None = Field(default=None, max_length=2_000)
+
+
+class ProducerRecommendationRead(BaseModel):
+    id: uuid.UUID
+    brand_id: uuid.UUID
+    discovered_media_id: uuid.UUID | None
+    project_id: uuid.UUID | None
+    clip_id: uuid.UUID | None
+    content_package_id: uuid.UUID | None
+    recommendation_type: str
+    status: str
+    confidence: float
+    reasoning: str
+    evidence_json: list[dict[str, object]]
+    recommendation_json: dict[str, object]
+    operator_edit_json: dict[str, object]
+    prediction_json: dict[str, object]
+    provider_name: str
+    model_name: str | None
+    provider_version: str | None
+    review_version: int
+    decided_by_id: uuid.UUID | None
+    decision_reason: str | None
+    created_at: datetime
+    updated_at: datetime
+    model_config = {"from_attributes": True}
+
+
+class ProducerDecisionRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    operator_edit_json: dict[str, object] = Field(default_factory=dict)
+    reason: str | None = Field(default=None, max_length=2_000)
+
+
+class ClipQualityReportRead(BaseModel):
+    id: uuid.UUID
+    brand_id: uuid.UUID
+    project_id: uuid.UUID
+    clip_id: uuid.UUID
+    report_version: int
+    hook_quality: float
+    pacing_quality: float
+    context_quality: float
+    retention_estimate: float
+    subtitle_quality: float
+    title_quality: float
+    caption_quality: float
+    hashtag_quality: float
+    overall_readiness: float
+    reasoning: str
+    evidence_json: list[dict[str, object]]
+    recommendations_json: dict[str, object]
+    prediction_json: dict[str, object]
+    provider_name: str
+    model_name: str | None
+    provider_version: str | None
+    created_at: datetime
+    model_config = {"from_attributes": True}
 
 
 class VideoAnalysisRead(BaseModel):
@@ -2586,6 +2651,99 @@ def create_app() -> FastAPI:
         return decide_content_package(
             session, actor.id, package, payload.expected_version, False, payload.reason
         )
+
+    @app.post(
+        "/api/v1/production/projects/{project_id}/producer/recommendations",
+        response_model=list[ProducerRecommendationRead],
+        status_code=status.HTTP_201_CREATED,
+    )
+    def generate_producer_recommendations_for_project(
+        project_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> list[ProducerRecommendation]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        project = session.get(ProductionProject, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="production project not found")
+        require_record_brand(session, actor, project)
+        return generate_project_recommendations(session, actor.id, project)
+
+    @app.get(
+        "/api/v1/production/projects/{project_id}/producer/recommendations",
+        response_model=list[ProducerRecommendationRead],
+    )
+    def list_producer_recommendations_for_project(
+        project_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> list[ProducerRecommendation]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        project = session.get(ProductionProject, project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="production project not found")
+        require_record_brand(session, actor, project)
+        return list(session.scalars(select(ProducerRecommendation).where(ProducerRecommendation.project_id == project.id).order_by(ProducerRecommendation.created_at.desc())))
+
+    @app.post("/api/v1/producer/recommendations/{recommendation_id}/approve", response_model=ProducerRecommendationRead)
+    def approve_producer_recommendation(
+        recommendation_id: uuid.UUID,
+        payload: ProducerDecisionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ProducerRecommendation:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        recommendation = session.get(ProducerRecommendation, recommendation_id)
+        if recommendation is None:
+            raise HTTPException(status_code=404, detail="producer recommendation not found")
+        require_record_brand(session, actor, recommendation)
+        return decide_recommendation(session, actor.id, recommendation, payload.expected_version, True, payload.operator_edit_json, payload.reason)
+
+    @app.post("/api/v1/producer/recommendations/{recommendation_id}/reject", response_model=ProducerRecommendationRead)
+    def reject_producer_recommendation(
+        recommendation_id: uuid.UUID,
+        payload: ProducerDecisionRequest,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ProducerRecommendation:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        recommendation = session.get(ProducerRecommendation, recommendation_id)
+        if recommendation is None:
+            raise HTTPException(status_code=404, detail="producer recommendation not found")
+        require_record_brand(session, actor, recommendation)
+        return decide_recommendation(session, actor.id, recommendation, payload.expected_version, False, payload.operator_edit_json, payload.reason)
+
+    @app.post(
+        "/api/v1/production/clips/{clip_id}/producer/quality-report",
+        response_model=ClipQualityReportRead,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def generate_quality_report_for_clip(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ClipQualityReport:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        report = generate_clip_quality_report(session, actor.id, clip)
+        generate_clip_recommendations(session, actor.id, clip)
+        return report
+
+    @app.get("/api/v1/production/clips/{clip_id}/producer/quality-reports", response_model=list[ClipQualityReportRead])
+    def list_quality_reports_for_clip(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> list[ClipQualityReport]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        return list(session.scalars(select(ClipQualityReport).where(ClipQualityReport.clip_id == clip.id).order_by(ClipQualityReport.report_version.desc())))
 
     @app.post("/api/v1/production/clips/{clip_id}/approve", response_model=ProductionClipRead)
     def approve_production_clip(

@@ -28,9 +28,9 @@ def test_initial_migration_is_self_contained_and_explicit():
     assert "contentstatus" in source
 
 
-def test_migration_history_has_one_discord_business_head():
+def test_migration_history_has_one_ai_producer_head():
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["0026_tiktok_credential_lifecycle"]
+    assert heads == ["0027_ai_producer_recommendations"]
 
 
 def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path):
@@ -46,6 +46,8 @@ def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path)
     assert check_sqlite_schema(database_path) == []
     assert "preview_grants" in inspector.get_table_names()
     assert "discord_tickets" in inspector.get_table_names()
+    assert "producer_recommendations" in inspector.get_table_names()
+    assert "clip_quality_reports" in inspector.get_table_names()
 
 
 def test_schema_hardening_indexes_nullability_and_foreign_keys(tmp_path: Path):

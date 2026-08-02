@@ -20,6 +20,7 @@ celery_app.conf.beat_schedule = {
     "scheduler-heartbeat": {"task": "viralforge.scheduler_heartbeat", "schedule": settings.scheduler_heartbeat_interval_seconds},
     "cleanup-expired-media": {"task": "viralforge.cleanup_expired_media", "schedule": settings.cleanup_interval_seconds},
     "refresh-published-analytics": {"task": "viralforge.refresh_published_analytics", "schedule": 3600},
+    "evaluate-producer-predictions": {"task": "viralforge.evaluate_producer_predictions", "schedule": 3600},
     "execute-due-publish-requests": {"task": "viralforge.execute_due_publish_requests", "schedule": 60},
     "refresh-due-tiktok-publish-requests": {"task": "viralforge.refresh_due_tiktok_publish_requests", "schedule": 60},
     "refresh-tiktok-credentials": {"task": "viralforge.refresh_tiktok_credentials", "schedule": 900},
@@ -145,6 +146,7 @@ def run_video_analysis(
             # Analysis has no remaining human gate. Ranking is deterministic,
             # idempotent, and still pauses before any clip is rendered.
             generate_clip_opportunities.delay(str(result.id))
+            generate_producer_recommendations.delay(str(project.id))
         return {"status": result.status, "analysis_id": str(result.id)}
     finally:
         session.close()
@@ -273,6 +275,8 @@ def render_approved_opportunity(opportunity_id: str) -> dict[str, str]:
             return {"status": "already_rendered", "opportunity_id": opportunity_id}
         if clip.render_status == "SUCCEEDED" and settings.preview_proxy_enabled:
             generate_preview_proxy_task.delay(str(clip.id))
+        if clip.render_status == "SUCCEEDED":
+            generate_clip_quality_report.delay(str(clip.id))
         return {"status": clip.render_status, "clip_id": str(clip.id)}
     finally:
         session.close()
@@ -318,6 +322,66 @@ def generate_content_package(clip_id: str, rerun: bool = False) -> dict[str, str
             "content_package_id": str(result.id),
             "generation_version": result.generation_version,
         }
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.generate_producer_recommendations")
+def generate_producer_recommendations(project_id: str) -> dict[str, str | int]:
+    """Persist advisory producer decisions without advancing the project."""
+    from sqlalchemy import select
+
+    from app.accounts.models import Role, RoleName, User, UserRole
+    from app.producer.service import generate_project_recommendations
+    from app.production.models import ProductionProject
+
+    session = next(get_session())
+    try:
+        actor = session.scalar(select(User.id).join(UserRole, UserRole.user_id == User.id).join(Role, Role.id == UserRole.role_id).where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN])).order_by(User.created_at))
+        project = session.get(ProductionProject, project_id)
+        if project is None:
+            return {"status": "not_found", "project_id": project_id}
+        items = generate_project_recommendations(session, actor, project)
+        return {"status": "ok", "project_id": project_id, "recommendation_count": len(items)}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.generate_clip_quality_report")
+def generate_clip_quality_report(clip_id: str) -> dict[str, str | int | float]:
+    """Persist a quality report for an already-rendered clip; never publish it."""
+    from sqlalchemy import select
+
+    from app.accounts.models import Role, RoleName, User, UserRole
+    from app.producer.service import (
+        generate_clip_quality_report as build_report,
+    )
+    from app.producer.service import (
+        generate_clip_recommendations,
+    )
+    from app.production.models import ProductionClip
+
+    session = next(get_session())
+    try:
+        actor = session.scalar(select(User.id).join(UserRole, UserRole.user_id == User.id).join(Role, Role.id == UserRole.role_id).where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN])).order_by(User.created_at))
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            return {"status": "not_found", "clip_id": clip_id}
+        report = build_report(session, actor, clip)
+        generate_clip_recommendations(session, actor, clip)
+        return {"status": "ok", "clip_id": clip_id, "overall_readiness": report.overall_readiness}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.evaluate_producer_predictions")
+def evaluate_producer_predictions() -> dict[str, int | str]:
+    """Compare stored estimates with official analytics only; no automatic tuning."""
+    from app.producer.service import evaluate_predictions
+
+    session = next(get_session())
+    try:
+        return {"status": "ok", "created": evaluate_predictions(session)}
     finally:
         session.close()
 

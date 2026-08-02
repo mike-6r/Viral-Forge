@@ -54,6 +54,8 @@ from app.opportunities.service import (
     decide_opportunity,
     request_opportunity_generation,
 )
+from app.producer.models import ClipQualityReport, ProducerRecommendation
+from app.producer.service import generate_clip_quality_report, generate_project_recommendations
 from app.production.models import (
     PostingQueueItem,
     ProductionClip,
@@ -832,6 +834,27 @@ class ProductionRepository:
             if clip is None:
                 raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
             return request_content_package_generation(session, self._actor(session), clip, rerun)
+        finally:
+            session.close()
+
+    def producer_recommendations(self, project_id: uuid.UUID) -> list[ProducerRecommendation]:
+        """Generate advisory recommendations; no production status is changed."""
+        session = next(self._session())
+        try:
+            project = session.get(ProductionProject, project_id)
+            if project is None:
+                raise ProductionError("PROJECT_NOT_FOUND", "project no longer exists")
+            return generate_project_recommendations(session, self._actor(session), project)
+        finally:
+            session.close()
+
+    def quality_report(self, clip_id: uuid.UUID) -> ClipQualityReport:
+        session = next(self._session())
+        try:
+            clip = session.get(ProductionClip, clip_id)
+            if clip is None:
+                raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
+            return generate_clip_quality_report(session, self._actor(session), clip)
         finally:
             session.close()
 
@@ -2112,6 +2135,23 @@ def clip_embed(clip: ProductionClip, total: int) -> discord.Embed:
     return embed
 
 
+def clip_quality_report_embed(report: ClipQualityReport) -> discord.Embed:
+    embed = discord.Embed(title="AI Producer quality report")
+    embed.description = (
+        f"Overall readiness: **{report.overall_readiness:.0f}/100** · "
+        f"retention estimate: **{report.retention_estimate:.0f}/100**\n"
+        "Advisory only — this report does not approve, queue, or publish anything."
+    )
+    embed.add_field(name="Hook", value=f"{report.hook_quality:.0f}/100")
+    embed.add_field(name="Pacing", value=f"{report.pacing_quality:.0f}/100")
+    embed.add_field(name="Context", value=f"{report.context_quality:.0f}/100")
+    embed.add_field(name="Subtitles", value=f"{report.subtitle_quality:.0f}/100")
+    embed.add_field(name="Title", value=f"{report.title_quality:.0f}/100")
+    embed.add_field(name="Caption / hashtags", value=f"{report.caption_quality:.0f} / {report.hashtag_quality:.0f}")
+    embed.add_field(name="Why", value=report.reasoning[:1024], inline=False)
+    return embed
+
+
 def opportunity_embed(state: OpportunityReviewState) -> discord.Embed:
     opportunity = state.opportunity
     embed = discord.Embed(title=f"Suggested clip {state.position + 1} of {state.total}")
@@ -2621,6 +2661,21 @@ class ClipReviewView(discord.ui.View):
             view=ContentPackageReviewView(package, self.repository, self.settings),
             ephemeral=True,
         )
+
+    @discord.ui.button(
+        label="Quality Report", style=discord.ButtonStyle.secondary, custom_id="viralforge:clip:quality-report"
+    )
+    async def quality_report(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ClipReviewView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            report = await asyncio.to_thread(self.repository.quality_report, self.state.clip.id)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        await interaction.response.send_message(embed=clip_quality_report_embed(report), ephemeral=True)
 
     async def _edit_review(self, interaction: discord.Interaction) -> None:
         self.previous.disabled = self.state.position == 0
@@ -3607,6 +3662,25 @@ class GuidedProjectView(discord.ui.View):
             view=ProjectDashboardView(self.project_id, self.repository, self.settings, state),
             ephemeral=True,
         )
+
+    @discord.ui.button(label="Producer Advice", style=discord.ButtonStyle.primary, custom_id="viralforge:guided:producer")
+    async def producer_advice(
+        self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            recommendations = await asyncio.to_thread(self.repository.producer_recommendations, self.project_id)
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        lines = [
+            f"• **{item.recommendation_type.replace('_', ' ').title()}** — {item.confidence:.0%}: {item.recommendation_json.get('recommendation', 'Review recommendation')}"
+            for item in recommendations[:6]
+        ]
+        embed = discord.Embed(title="AI Producer recommendations", description="\n".join(lines) or "No recommendations are available yet.")
+        embed.set_footer(text="Recommendations are stored for review and analytics comparison. They do not change the pipeline.")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @discord.ui.button(label="Refresh Status", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:refresh")
     async def refresh(
