@@ -87,6 +87,9 @@ class Settings(BaseSettings):
     tiktok_client_id: str | None = None
     tiktok_client_secret: str | None = None
     tiktok_client_secret_credential_reference: str | None = None
+    credential_store_backend: str = "env"
+    credential_store_file_path: str = "/data/credentials/viralforge-credentials.json"
+    credential_store_master_key_reference: str | None = None
     tiktok_enabled: bool = False
     tiktok_draft_upload_enabled: bool = False
     tiktok_direct_post_enabled: bool = False
@@ -368,6 +371,10 @@ class Settings(BaseSettings):
                 raise ValueError("TikTok enabled requires a client-secret credential reference")
             if not self.tiktok_oauth_state_secret or len(self.tiktok_oauth_state_secret) < 32:
                 raise ValueError("TikTok enabled requires a strong OAuth state secret")
+            if self.credential_store_backend not in {"env", "encrypted_file"}:
+                raise ValueError("credential store backend must be env or encrypted_file")
+            if self.credential_store_backend == "encrypted_file" and not self.credential_store_master_key_reference:
+                raise ValueError("encrypted_file credential storage requires a master-key reference")
         if self.tiktok_public_direct_post_enabled and self.tiktok_application_review_state != "AUDITED":
             raise ValueError("public TikTok Direct Post requires an AUDITED TikTok application")
         if self.deployment_mode is DeploymentMode.IP_BOOTSTRAP:

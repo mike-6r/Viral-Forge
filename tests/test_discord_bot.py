@@ -282,6 +282,7 @@ def test_guided_empty_state_views_keep_an_actionable_next_step():
     ]
     assert [child.label for child in publishing.children] == [
         "Set Up YouTube",
+        "Set Up TikTok",
         "Find Videos",
         "Back",
     ]

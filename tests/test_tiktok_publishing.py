@@ -2,11 +2,14 @@ import json
 import uuid
 from pathlib import Path
 
+import httpx
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
 from app.brands.models import Brand, DestinationAccount
 from app.common.config import Settings
+from app.publishing.credentials import EncryptedFileCredentialStore, EnvironmentCredentialStore
 from app.publishing.models import PublishingAccountConnection, PublishRequestStatus
 from app.publishing.service import (
     MediaValidation,
@@ -20,7 +23,9 @@ from app.publishing.tiktok import (
     TikTokMode,
     TikTokPublishingProvider,
     consume_oauth_state,
+    consume_oauth_verifier,
     create_oauth_state,
+    oauth_code_challenge,
 )
 from tests.conftest import DEV_ACTOR_ID
 from tests.test_publishing_foundation import _ready_publish_context
@@ -74,10 +79,18 @@ def test_tiktok_request_is_brand_scoped_explicit_and_idempotent(session: Session
         request_tiktok_publish(session, DEV_ACTOR_ID, clip, package, destination, "tiktok-draft-key-002", TikTokMode.DRAFT_UPLOAD, settings=settings)
 
 
-def test_unaudited_direct_post_forces_self_only_and_oauth_state_is_one_time(session: Session) -> None:
+def test_unaudited_direct_post_forces_self_only_and_oauth_state_is_one_time(
+    monkeypatch: pytest.MonkeyPatch, session: Session, tmp_path: Path
+) -> None:
     brand, clip, package, _ = _ready_publish_context(session)
     destination = _tiktok_destination(session, brand.id)
-    settings = _settings(tiktok_application_review_state="UNAUDITED")
+    monkeypatch.setenv("TEST_TIKTOK_STORE_KEY", Fernet.generate_key().decode())
+    settings = _settings(
+        tiktok_application_review_state="UNAUDITED",
+        credential_store_backend="encrypted_file",
+        credential_store_file_path=str(tmp_path / "credentials.bin"),
+        credential_store_master_key_reference="env://TEST_TIKTOK_STORE_KEY",
+    )
     request = request_tiktok_publish(session, DEV_ACTOR_ID, clip, package, destination, "tiktok-direct-key-001", TikTokMode.DIRECT_POST, "SELF_ONLY", settings)
     assert request.platform_metadata["privacy_level"] == "SELF_ONLY"
     with pytest.raises(PublishingError, match="public"):
@@ -118,3 +131,80 @@ def test_tiktok_provider_never_requires_real_network_for_unit_configuration(monk
     monkeypatch.setenv("TEST_TIKTOK_TOKEN_JSON", json.dumps({"access_token": "not-logged", "scope": "video.upload,video.publish"}))
     provider = TikTokPublishingProvider(_settings())
     assert provider._tokens(destination).scopes == frozenset({"video.upload", "video.publish"})
+
+
+def test_encrypted_file_credential_store_is_atomic_redacted_and_deletable(tmp_path: Path) -> None:
+    secret = "access-token-that-must-not-appear-on-disk"
+    store = EncryptedFileCredentialStore(tmp_path / "credentials.bin", Fernet.generate_key().decode())
+    reference = store.create({"access_token": secret, "refresh_token": "refresh-token"}, namespace="tiktok")
+    assert reference.startswith("file://tiktok_")
+    assert store.read(reference)["access_token"] == secret
+    assert secret.encode() not in (tmp_path / "credentials.bin").read_bytes()
+    store.replace(reference, {"access_token": "replacement"})
+    assert store.read(reference) == {"access_token": "replacement"}
+    assert store.health()["status"] == "ok"
+    store.delete(reference)
+    assert not store.exists(reference)
+
+
+def test_environment_credential_store_is_read_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TEST_TIKTOK_TOKEN", json.dumps({"access_token": "test"}))
+    store = EnvironmentCredentialStore()
+    assert store.read("env://TEST_TIKTOK_TOKEN")["access_token"] == "test"
+    with pytest.raises(PublishingError, match="cannot be created"):
+        store.create({"access_token": "test"})
+
+
+def test_tiktok_transfer_streams_deterministic_chunks_without_persisting_upload_url(
+    monkeypatch: pytest.MonkeyPatch, session: Session, tmp_path: Path
+) -> None:
+    brand, _, _, _ = _ready_publish_context(session)
+    _tiktok_destination(session, brand.id)
+    monkeypatch.setenv(
+        "TEST_TIKTOK_TOKEN_JSON",
+        json.dumps({"access_token": "test", "scope": "video.upload,video.publish"}),
+    )
+    chunk_size = 5_000_000
+    payload = b"x" * (chunk_size * 2 + 7)
+    media_path = tmp_path / "clip.mp4"
+    media_path.write_bytes(payload)
+    calls: list[dict[str, str]] = []
+
+    def put(url: str, **kwargs: object) -> httpx.Response:
+        assert url == "https://upload.invalid/opaque"
+        headers = kwargs["headers"]
+        assert isinstance(headers, dict)
+        calls.append({str(key): str(value) for key, value in headers.items()})
+        return httpx.Response(200)
+
+    monkeypatch.setattr("app.publishing.tiktok.httpx.put", put)
+    provider = TikTokPublishingProvider(_settings(tiktok_transfer_chunk_size_bytes=chunk_size))
+    provider.transfer(
+        TikTokInitialization("publish-1", "https://upload.invalid/opaque"),
+        MediaValidation(media_path, "video/mp4", 20, "h264", "aac", 1080, 1920, 30),
+    )
+    assert [call["Content-Range"] for call in calls] == [
+        f"bytes 0-{chunk_size - 1}/{len(payload)}",
+        f"bytes {chunk_size}-{len(payload) - 1}/{len(payload)}",
+    ]
+    assert [call["Content-Length"] for call in calls] == [str(chunk_size), str(chunk_size + 7)]
+
+
+def test_pkce_verifier_is_external_and_one_time(
+    monkeypatch: pytest.MonkeyPatch, session: Session, tmp_path: Path
+) -> None:
+    brand, _, _, _ = _ready_publish_context(session)
+    destination = _tiktok_destination(session, brand.id)
+    monkeypatch.setenv("TEST_TIKTOK_STORE_KEY", Fernet.generate_key().decode())
+    settings = _settings(
+        credential_store_backend="encrypted_file",
+        credential_store_file_path=str(tmp_path / "credentials.bin"),
+        credential_store_master_key_reference="env://TEST_TIKTOK_STORE_KEY",
+    )
+    state, raw = create_oauth_state(session, destination, settings)
+    assert state.pkce_verifier_reference and state.pkce_verifier_reference.startswith("file://oauth_")
+    assert oauth_code_challenge(session, state, settings)
+    consumed = consume_oauth_state(session, raw, settings)
+    assert consume_oauth_verifier(consumed, settings)
+    with pytest.raises(PublishingError, match="unavailable"):
+        consume_oauth_verifier(consumed, settings)

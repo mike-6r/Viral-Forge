@@ -541,7 +541,11 @@ def execute_tiktok_publish(session: Session, request_id: uuid.UUID, settings: Se
         session.commit()
         provider.transfer(initialized, media, lambda value: _persist_tiktok_progress(session, request, value))
     except PublishingError as error:
-        unknown = request.provider_upload_session_id is not None and request.status == PublishRequestStatus.TRANSFERRING and "NETWORK" in error.code
+        unknown = (
+            request.provider_upload_session_id is not None
+            and request.status == PublishRequestStatus.TRANSFERRING
+            and error.code in {"TIKTOK_NETWORK_FAILURE", "TIKTOK_UNKNOWN_REMOTE_OUTCOME"}
+        )
         request.status = PublishRequestStatus.UNKNOWN_REMOTE_OUTCOME if unknown else PublishRequestStatus.FAILED
         request.failure_category, request.failure_summary = _failure_category(error), error.message
         request.reconciliation_reason = "transfer network outcome is uncertain" if unknown else None
@@ -589,6 +593,96 @@ def refresh_tiktok_status(session: Session, request_id: uuid.UUID, settings: Set
         request.status, request.reconciliation_reason = PublishRequestStatus.MANUAL_RECONCILIATION_REQUIRED, "TikTok status polling limit reached"
     session.commit()
     return request
+
+
+def refresh_tiktok_connection(
+    session: Session, actor_id: uuid.UUID | None, account_id: uuid.UUID, settings: Settings | None = None
+) -> PublishingAccountConnection:
+    """Refresh one TikTok token under a destination-row lock and atomically replace it."""
+    settings = settings or get_settings()
+    from app.publishing.credentials import credential_store
+    from app.publishing.tiktok import TikTokPublishingProvider
+
+    account = session.scalar(select(DestinationAccount).where(DestinationAccount.id == account_id).with_for_update())
+    if account is None or account.provider.upper() != "TIKTOK" or not account.credential_reference_id:
+        raise PublishingError("TIKTOK_DESTINATION_INVALID", "an active TikTok destination is required")
+    connection = session.scalar(
+        select(PublishingAccountConnection).where(
+            PublishingAccountConnection.destination_account_id == account.id
+        )
+    )
+    if connection is None:
+        connection = PublishingAccountConnection(destination_account_id=account.id)
+    try:
+        tokens = TikTokPublishingProvider(settings).refresh_token(account)
+        credential_store(settings).replace(account.credential_reference_id, tokens.payload())
+        connection.connection_state = "CONNECTED"
+        connection.granted_scopes = sorted(tokens.scopes)
+        connection.credential_expires_at = str(tokens.payload().get("expires_at") or "") or None
+        connection.last_error_category, connection.last_error_summary = None, None
+    except PublishingError as error:
+        connection.connection_state = "DEGRADED"
+        connection.last_error_category, connection.last_error_summary = error.code, error.message
+        session.add(connection)
+        session.commit()
+        raise
+    connection.checked_at = _now()
+    session.add(connection)
+    session.add(
+        AuditEvent(
+            actor_id=actor_id,
+            entity_type="destination_account",
+            entity_id=account.id,
+            brand_id=account.brand_id,
+            event_name="tiktok.credential.refreshed",
+        )
+    )
+    session.commit()
+    return connection
+
+
+def disconnect_tiktok_connection(
+    session: Session, actor_id: uuid.UUID, account: DestinationAccount, settings: Settings | None = None
+) -> PublishingAccountConnection:
+    """Revoke first, then remove the external token and deactivate the destination."""
+    settings = settings or get_settings()
+    from app.publishing.credentials import credential_store
+    from app.publishing.tiktok import TikTokPublishingProvider
+
+    if account.provider.upper() != "TIKTOK" or not account.credential_reference_id:
+        raise PublishingError("TIKTOK_DESTINATION_INVALID", "TikTok destination credential is required")
+    connection = session.scalar(
+        select(PublishingAccountConnection).where(
+            PublishingAccountConnection.destination_account_id == account.id
+        )
+    )
+    if connection is None:
+        connection = PublishingAccountConnection(destination_account_id=account.id)
+    try:
+        TikTokPublishingProvider(settings).revoke(account)
+        credential_store(settings).delete(account.credential_reference_id)
+    except PublishingError as error:
+        connection.connection_state = "DEGRADED"
+        connection.last_error_category, connection.last_error_summary = error.code, error.message
+        session.add(connection)
+        session.commit()
+        raise
+    account.is_active = False
+    connection.connection_state = "DISCONNECTED"
+    connection.granted_scopes, connection.credential_expires_at = [], None
+    connection.last_error_category, connection.last_error_summary, connection.checked_at = None, None, _now()
+    session.add_all([account, connection])
+    session.add(
+        AuditEvent(
+            actor_id=actor_id,
+            entity_type="destination_account",
+            entity_id=account.id,
+            brand_id=account.brand_id,
+            event_name="tiktok.connection.disconnected",
+        )
+    )
+    session.commit()
+    return connection
 
 
 def complete_tiktok_draft(session: Session, actor_id: uuid.UUID, request: PublishRequest, outcome: str, post_url: str | None = None) -> PublishRequest:

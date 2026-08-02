@@ -3978,7 +3978,6 @@ class ReviewFoundVideosView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Set Up TikTok", style=discord.ButtonStyle.primary)
     async def tiktok(
         self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]
     ) -> None:
@@ -4022,6 +4021,26 @@ class ContentReadySetupView(discord.ui.View):
             "ViralForge will never ask for a token, password, or cookie here. TikTok, Instagram, Facebook, and X are coming soon.",
             ephemeral=True,
         )
+
+    @discord.ui.button(label="Set Up TikTok", style=discord.ButtonStyle.primary)
+    async def tiktok(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]
+    ) -> None:
+        if self.settings.deployment_mode.value == "ip_bootstrap":
+            message = (
+                "**TikTok connection requires a trusted HTTPS domain.** ViralForge is currently "
+                "running in temporary IP-bootstrap mode. Configure the HTTPS hostname, registered "
+                "TikTok redirect URI, and encrypted credential store first. Discord will never ask "
+                "for a TikTok password, token, cookie, or client secret."
+            )
+        else:
+            message = (
+                "**Connect a TikTok account for the active brand**\n"
+                "An owner starts the secure OAuth connection from the brand-scoped TikTok settings "
+                "endpoint. The account uses encrypted external storage, defaults to draft upload, "
+                "and still requires a separate Confirm Transfer action."
+            )
+        await interaction.response.send_message(message, ephemeral=True)
 
     @discord.ui.button(label="Find Videos", style=discord.ButtonStyle.secondary)
     async def find(

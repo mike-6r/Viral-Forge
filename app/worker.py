@@ -22,6 +22,7 @@ celery_app.conf.beat_schedule = {
     "refresh-published-analytics": {"task": "viralforge.refresh_published_analytics", "schedule": 3600},
     "execute-due-publish-requests": {"task": "viralforge.execute_due_publish_requests", "schedule": 60},
     "refresh-due-tiktok-publish-requests": {"task": "viralforge.refresh_due_tiktok_publish_requests", "schedule": 60},
+    "refresh-tiktok-credentials": {"task": "viralforge.refresh_tiktok_credentials", "schedule": 900},
     "poll-due-discovery-sources": {"task": "viralforge.discovery_poll_due_sources", "schedule": 300},
 }
 
@@ -397,10 +398,48 @@ def refresh_due_tiktok_publish_requests() -> dict[str, int | str]:
 
 @celery_app.task(name="viralforge.refresh_tiktok_credentials")
 def refresh_tiktok_credentials() -> dict[str, int | str]:
-    """Credential refresh has no persistence side effect without a vault adapter."""
+    """Bounded refresh pass; encrypted-store replacement is atomic per destination."""
     if not settings.tiktok_enabled:
         return {"status": "disabled", "refreshed": 0}
-    return {"status": "external_credential_vault_required", "refreshed": 0}
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import select
+
+    from app.brands.models import DestinationAccount
+    from app.publishing.models import PublishingAccountConnection
+    from app.publishing.service import PublishingError, refresh_tiktok_connection
+
+    session = next(get_session())
+    try:
+        due_at = (datetime.now(UTC) + timedelta(seconds=settings.tiktok_credential_refresh_window_seconds)).isoformat()
+        accounts = list(
+            session.scalars(
+                select(DestinationAccount)
+                .join(
+                    PublishingAccountConnection,
+                    PublishingAccountConnection.destination_account_id == DestinationAccount.id,
+                )
+                .where(
+                    DestinationAccount.provider == "TIKTOK",
+                    DestinationAccount.is_active.is_(True),
+                    PublishingAccountConnection.connection_state == "CONNECTED",
+                    PublishingAccountConnection.credential_expires_at.is_not(None),
+                    PublishingAccountConnection.credential_expires_at <= due_at,
+                )
+                .order_by(PublishingAccountConnection.credential_expires_at)
+                .limit(10)
+            )
+        )
+        refreshed = 0
+        for account in accounts:
+            try:
+                refresh_tiktok_connection(session, None, account.id)
+                refreshed += 1
+            except PublishingError:
+                continue
+        return {"status": "ok", "refreshed": refreshed}
+    finally:
+        session.close()
 
 
 @celery_app.task(name="viralforge.execute_due_publish_requests")

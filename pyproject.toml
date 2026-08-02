@@ -14,7 +14,7 @@ dependencies = [
   "beautifulsoup4>=4.12,<5", "httpx>=0.28,<1", "PyYAML>=6.0,<7",
   "pydantic-settings>=2.6,<3", "psycopg[binary]>=3.2,<4", "python-multipart>=0.0.20,<1",
   "sqlalchemy>=2.0,<3", "structlog>=24.4,<26", "uvicorn[standard]>=0.32,<1"
-  , "faster-whisper>=1.1,<2"
+  , "faster-whisper>=1.1,<2", "cryptography>=43,<46"
 ]
 
 [project.optional-dependencies]

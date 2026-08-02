@@ -38,6 +38,8 @@ class PublishingAccountConnection(UUIDTimestampMixin, Base):
     checked_at: Mapped[str | None] = mapped_column(String(64))
     last_error_category: Mapped[str | None] = mapped_column(String(100))
     last_error_summary: Mapped[str | None] = mapped_column(Text)
+    granted_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    credential_expires_at: Mapped[str | None] = mapped_column(String(64), index=True)
 
 
 class PublishReviewGate(UUIDTimestampMixin, Base):
@@ -102,6 +104,7 @@ class TikTokOAuthState(UUIDTimestampMixin, Base):
     destination_account_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("destination_accounts.id"), index=True)
     state_digest: Mapped[str] = mapped_column(String(128))
     requested_scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    pkce_verifier_reference: Mapped[str | None] = mapped_column(String(500))
     expires_at: Mapped[str] = mapped_column(String(64), index=True)
     consumed_at: Mapped[str | None] = mapped_column(String(64))
 

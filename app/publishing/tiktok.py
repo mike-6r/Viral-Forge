@@ -5,10 +5,10 @@ persistence is permitted here.  The provider is deliberately small and uses
 only Login Kit and Content Posting API v2 endpoints.
 """
 
+import base64
 import hashlib
 import hmac
 import json
-import math
 import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -22,8 +22,9 @@ from sqlalchemy.orm import Session
 
 from app.brands.models import DestinationAccount
 from app.common.config import Settings, get_settings
+from app.publishing.credentials import CredentialStore, credential_store
 from app.publishing.models import TikTokCreatorCapability, TikTokOAuthState
-from app.publishing.service import EnvironmentCredentialResolver, MediaValidation, PublishingError
+from app.publishing.service import MediaValidation, PublishingError
 
 TIKTOK_API_BASE = "https://open.tiktokapis.com"
 TIKTOK_AUTH_URL = "https://www.tiktok.com/v2/auth/authorize/"
@@ -44,6 +45,20 @@ class TikTokTokenSet:
     expires_in: int | None
     scopes: frozenset[str]
 
+    def payload(self) -> dict[str, object]:
+        return {
+            "access_token": self.access_token,
+            "refresh_token": self.refresh_token or "",
+            "open_id": self.open_id or "",
+            "expires_in": self.expires_in or 0,
+            "expires_at": (
+                (datetime.now(UTC) + timedelta(seconds=self.expires_in)).isoformat()
+                if self.expires_in
+                else ""
+            ),
+            "scope": ",".join(sorted(self.scopes)),
+        }
+
 
 @dataclass(frozen=True)
 class TikTokInitialization:
@@ -62,6 +77,27 @@ class CreatorCapabilities:
     duet_disabled: bool
     stitch_disabled: bool
     provider_log_id: str | None
+
+
+def transfer_chunk_sizes(total_bytes: int, configured_chunk_size: int) -> list[int]:
+    """Return TikTok-valid sequential FILE_UPLOAD chunk sizes.
+
+    TikTok allows a small video as one chunk.  For larger videos, a trailing
+    remainder below 5 MB must be merged into the final regular chunk rather
+    than sent as an invalid tiny request.
+    """
+    minimum = 5_000_000
+    if total_bytes <= 0:
+        raise PublishingError("TIKTOK_MEDIA_EMPTY", "rendered clip has no transferable bytes")
+    chunk_size = min(configured_chunk_size, total_bytes)
+    if total_bytes <= chunk_size:
+        return [total_bytes]
+    full_chunks, remainder = divmod(total_bytes, chunk_size)
+    if not remainder:
+        return [chunk_size] * full_chunks
+    if remainder < minimum:
+        return [chunk_size] * (full_chunks - 1) + [chunk_size + remainder]
+    return [chunk_size] * full_chunks + [remainder]
 
 
 def _now() -> str:
@@ -91,24 +127,29 @@ class TikTokPublishingProvider:
 
     provider_name = "TIKTOK"
 
-    def __init__(self, settings: Settings | None = None, resolver: EnvironmentCredentialResolver | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, store: CredentialStore | None = None) -> None:
         self.settings = settings or get_settings()
-        self.resolver = resolver or EnvironmentCredentialResolver()
+        self.store = store or credential_store(self.settings)
 
     def _tokens(self, account: DestinationAccount) -> TikTokTokenSet:
-        raw = self.resolver.resolve(account.credential_reference_id)
-        try:
-            payload = json.loads(raw)
-        except json.JSONDecodeError as error:
-            raise PublishingError("TIKTOK_CREDENTIAL_FORMAT_INVALID", "TikTok credential reference must resolve to managed token JSON") from error
+        if not account.credential_reference_id:
+            raise PublishingError("TIKTOK_CREDENTIAL_UNAVAILABLE", "TikTok credential reference is unavailable")
+        payload = self.store.read(account.credential_reference_id)
         access = str(payload.get("access_token") or "")
         if not access:
             raise PublishingError("TIKTOK_CREDENTIAL_UNAVAILABLE", "TikTok access token is unavailable from the external credential reference")
         scopes = payload.get("scope") or payload.get("scopes") or ""
         values = set(scopes.split(",")) if isinstance(scopes, str) else set(scopes if isinstance(scopes, list) else [])
-        return TikTokTokenSet(access, str(payload.get("refresh_token") or "") or None, str(payload.get("open_id") or "") or None, int(payload["expires_in"]) if str(payload.get("expires_in") or "").isdigit() else None, frozenset(str(item).strip() for item in values if str(item).strip()))
+        expires_raw = str(payload.get("expires_in") or "")
+        return TikTokTokenSet(
+            access,
+            str(payload.get("refresh_token") or "") or None,
+            str(payload.get("open_id") or "") or None,
+            int(expires_raw) if expires_raw.isdigit() else None,
+            frozenset(str(item).strip() for item in values if str(item).strip()),
+        )
 
-    def authorization_url(self, state: str, scopes: list[str]) -> str:
+    def authorization_url(self, state: str, scopes: list[str], code_challenge: str | None = None) -> str:
         if not self.settings.tiktok_client_id:
             raise PublishingError("TIKTOK_NOT_CONFIGURED", "TikTok client key is not configured")
         params = {
@@ -118,6 +159,9 @@ class TikTokPublishingProvider:
             "redirect_uri": self.settings.oauth_callback_url("tiktok"),
             "state": state,
         }
+        if code_challenge:
+            params["code_challenge"] = code_challenge
+            params["code_challenge_method"] = "S256"
         return f"{TIKTOK_AUTH_URL}?{urlencode(params)}"
 
     def verify_connection(self, account: DestinationAccount) -> tuple[str | None, str | None]:
@@ -140,10 +184,15 @@ class TikTokPublishingProvider:
             raise PublishingError("TIKTOK_CREATOR_IDENTITY_MISSING", "TikTok did not return the connected creator identity")
         return identity, None
 
-    def exchange_code(self, code: str) -> TikTokTokenSet:
-        secret = self.resolver.resolve(self.settings.tiktok_client_secret_credential_reference)
+    def exchange_code(self, code: str, code_verifier: str | None = None) -> TikTokTokenSet:
+        from app.publishing.service import EnvironmentCredentialResolver
+
+        secret = EnvironmentCredentialResolver().resolve(self.settings.tiktok_client_secret_credential_reference)
+        payload: dict[str, str] = {"client_key": self.settings.tiktok_client_id or "", "client_secret": secret, "code": code, "grant_type": "authorization_code", "redirect_uri": self.settings.oauth_callback_url("tiktok")}
+        if code_verifier:
+            payload["code_verifier"] = code_verifier
         try:
-            response = httpx.post(TIKTOK_TOKEN_URL, data={"client_key": self.settings.tiktok_client_id, "client_secret": secret, "code": code, "grant_type": "authorization_code", "redirect_uri": self.settings.oauth_callback_url("tiktok")}, timeout=self.settings.tiktok_request_timeout_seconds)
+            response = httpx.post(TIKTOK_TOKEN_URL, data=payload, timeout=self.settings.tiktok_request_timeout_seconds)
             data, _ = _response_data(response)
         except httpx.HTTPError as error:
             raise PublishingError("TIKTOK_NETWORK_FAILURE", "could not reach TikTok for token exchange") from error
@@ -153,7 +202,9 @@ class TikTokPublishingProvider:
         tokens = self._tokens(account)
         if not tokens.refresh_token:
             raise PublishingError("TIKTOK_REFRESH_UNAVAILABLE", "the externally managed TikTok credential has no refresh token")
-        secret = self.resolver.resolve(self.settings.tiktok_client_secret_credential_reference)
+        from app.publishing.service import EnvironmentCredentialResolver
+
+        secret = EnvironmentCredentialResolver().resolve(self.settings.tiktok_client_secret_credential_reference)
         try:
             response = httpx.post(TIKTOK_TOKEN_URL, data={"client_key": self.settings.tiktok_client_id, "client_secret": secret, "grant_type": "refresh_token", "refresh_token": tokens.refresh_token}, timeout=self.settings.tiktok_request_timeout_seconds)
             data, _ = _response_data(response)
@@ -192,8 +243,9 @@ class TikTokPublishingProvider:
         size = media.path.stat().st_size
         if size > self.settings.tiktok_max_media_bytes:
             raise PublishingError("TIKTOK_MEDIA_TOO_LARGE", "the rendered clip exceeds the configured TikTok media limit")
+        chunk_sizes = transfer_chunk_sizes(size, self.settings.tiktok_transfer_chunk_size_bytes)
         chunk_size = min(self.settings.tiktok_transfer_chunk_size_bytes, size)
-        chunks = max(1, math.ceil(size / chunk_size))
+        chunks = len(chunk_sizes)
         source = {"source": "FILE_UPLOAD", "video_size": size, "chunk_size": chunk_size, "total_chunk_count": chunks}
         if mode == TikTokMode.DRAFT_UPLOAD:
             endpoint, body = "/v2/post/publish/inbox/video/init/", {"source_info": source}
@@ -217,23 +269,31 @@ class TikTokPublishingProvider:
 
     def transfer(self, initialization: TikTokInitialization, media: MediaValidation, progress: Callable[[int], None] | None = None) -> None:
         total = media.path.stat().st_size
-        chunk_size = min(self.settings.tiktok_transfer_chunk_size_bytes, total)
+        chunk_sizes = transfer_chunk_sizes(total, self.settings.tiktok_transfer_chunk_size_bytes)
         try:
             with media.path.open("rb") as handle:
                 offset = 0
-                while True:
-                    chunk = handle.read(chunk_size)
-                    if not chunk:
-                        break
+                for expected_size in chunk_sizes:
+                    chunk = handle.read(expected_size)
+                    if len(chunk) != expected_size:
+                        raise PublishingError("TIKTOK_TRANSFER_FAILED", "rendered clip changed during transfer")
                     end = offset + len(chunk) - 1
                     response = httpx.put(initialization.upload_url, content=chunk, headers={"Content-Type": media.mime_type, "Content-Length": str(len(chunk)), "Content-Range": f"bytes {offset}-{end}/{total}"}, timeout=self.settings.tiktok_upload_timeout_seconds)
                     if response.status_code >= 400:
+                        if end == total - 1 and response.status_code >= 500:
+                            raise PublishingError(
+                                "TIKTOK_UNKNOWN_REMOTE_OUTCOME",
+                                "TikTok transfer completion is uncertain and requires reconciliation",
+                            )
                         raise PublishingError("TIKTOK_TRANSFER_FAILED", "TikTok rejected a video transfer chunk")
                     offset += len(chunk)
                     if progress:
                         progress(min(99, int(offset * 100 / total)))
         except httpx.HTTPError as error:
-            raise PublishingError("TIKTOK_NETWORK_FAILURE", "network failure during TikTok transfer; remote outcome requires reconciliation") from error
+            raise PublishingError(
+                "TIKTOK_UNKNOWN_REMOTE_OUTCOME",
+                "TikTok transfer outcome is uncertain and requires reconciliation",
+            ) from error
 
     def status(self, account: DestinationAccount, publish_id: str) -> tuple[str, int | None, str | None, str | None]:
         token = self._tokens(account)
@@ -253,13 +313,40 @@ def create_oauth_state(session: Session, account: DestinationAccount, settings: 
     settings.require_trusted_https_feature()
     if account.provider.upper() != "TIKTOK" or not account.is_active:
         raise PublishingError("TIKTOK_DESTINATION_INVALID", "an active TikTok destination is required")
+    store = credential_store(settings)
     raw = secrets.token_urlsafe(48)
+    verifier = secrets.token_urlsafe(64)
     secret = settings.tiktok_oauth_state_secret or ""
     digest = hmac.new(secret.encode(), raw.encode(), hashlib.sha256).hexdigest()
-    state = TikTokOAuthState(brand_id=account.brand_id, destination_account_id=account.id, state_digest=digest, requested_scopes=scopes or ["user.info.basic", "video.upload"], expires_at=(datetime.now(UTC) + timedelta(seconds=settings.tiktok_oauth_state_ttl_seconds)).isoformat())
+    verifier_reference = store.create({"code_verifier": verifier}, namespace="oauth")
+    state = TikTokOAuthState(brand_id=account.brand_id, destination_account_id=account.id, state_digest=digest, requested_scopes=scopes or ["user.info.basic", "video.upload"], pkce_verifier_reference=verifier_reference, expires_at=(datetime.now(UTC) + timedelta(seconds=settings.tiktok_oauth_state_ttl_seconds)).isoformat())
     session.add(state)
     session.commit()
     return state, raw
+
+
+def oauth_code_challenge(session: Session, state: TikTokOAuthState, settings: Settings | None = None) -> str:
+    settings = settings or get_settings()
+    if not state.pkce_verifier_reference:
+        raise PublishingError("TIKTOK_OAUTH_STATE_INVALID", "TikTok authorization state is invalid")
+    verifier = credential_store(settings).read(state.pkce_verifier_reference).get("code_verifier")
+    if not isinstance(verifier, str) or not verifier:
+        raise PublishingError("TIKTOK_OAUTH_STATE_INVALID", "TikTok authorization state is invalid")
+    return base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
+
+
+def consume_oauth_verifier(state: TikTokOAuthState, settings: Settings | None = None) -> str:
+    settings = settings or get_settings()
+    if not state.pkce_verifier_reference:
+        raise PublishingError("TIKTOK_OAUTH_STATE_INVALID", "TikTok authorization state is invalid")
+    store = credential_store(settings)
+    try:
+        verifier = store.read(state.pkce_verifier_reference).get("code_verifier")
+    finally:
+        store.delete(state.pkce_verifier_reference)
+    if not isinstance(verifier, str) or not verifier:
+        raise PublishingError("TIKTOK_OAUTH_STATE_INVALID", "TikTok authorization state is invalid")
+    return verifier
 
 
 def consume_oauth_state(session: Session, raw_state: str, settings: Settings | None = None) -> TikTokOAuthState:
