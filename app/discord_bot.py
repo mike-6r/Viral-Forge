@@ -1584,7 +1584,11 @@ class OperatorAccessHelpView(discord.ui.View):
         )
 
 
-VIRALFORGE_CORAL = 0xFF6B6B
+VIRALFORGE_CORAL = 0xFF4D44
+VIRALFORGE_BLUE = 0x3BA3FF
+VIRALFORGE_SUCCESS = 0x2FBF71
+VIRALFORGE_WARNING = 0xD99A2B
+VIRALFORGE_ERROR = 0xD94C4C
 
 FRIENDLY_PROJECT_STATUSES = {
     "NEW": "Awaiting source",
@@ -1603,11 +1607,39 @@ FRIENDLY_PROJECT_STATUSES = {
     "PUBLISHED": "Published",
     "FAILED": "Needs attention",
     "REJECTED": "Rejected",
+    "QUEUED": "Waiting to start",
+    "RUNNING": "Processing",
+    "COMPLETED": "Complete",
+    "PENDING": "Needs review",
+    "NOT_QUEUED": "Not scheduled",
+    "READY_TO_POST": "Ready to publish",
 }
 
 
 def friendly_project_status(status: str) -> str:
     return FRIENDLY_PROJECT_STATUSES.get(status, "In progress")
+
+
+def operational_status_embed(status: dict[str, bool]) -> discord.Embed:
+    """Friendly status; infrastructure identifiers stay out of operator views."""
+    labels = {
+        "yt_dlp": "Video download",
+        "ffmpeg": "Rendering",
+        "ffprobe": "Media inspection",
+        "discord_configured": "Discord",
+        "youtube_search_configured": "YouTube discovery",
+    }
+    ready = sum(status.values())
+    embed = discord.Embed(
+        title="Operations health",
+        description=("Core services are ready." if ready == len(status) else "One or more services need attention."),
+        color=VIRALFORGE_SUCCESS if ready == len(status) else VIRALFORGE_WARNING,
+    )
+    embed.set_author(name="OPERATIONS")
+    for key, value in status.items():
+        embed.add_field(name=labels[key], value="Healthy" if value else "Needs setup", inline=True)
+    embed.set_footer(text="ViralForge Operations Center")
+    return embed
 
 
 def lifecycle_next_action(state: DashboardState) -> str:
@@ -3522,12 +3554,25 @@ class DiscoveryReviewView(discord.ui.View):
 
 def control_center_embed(state: ControlCenterState) -> discord.Embed:
     """Default operator screen: plain-language decisions, not internal state."""
+    needs_attention = (
+        state.failure_count
+        + state.source_review_count
+        + state.discovery_pending_count
+        + state.opportunity_pending_count
+        + state.clip_pending_count
+    )
     embed = discord.Embed(
         title=state.active_brand_name,
         description=operator_attention_summary(state),
-        color=VIRALFORGE_CORAL,
+        color=(
+            VIRALFORGE_ERROR
+            if state.failure_count
+            else VIRALFORGE_WARNING
+            if needs_attention
+            else VIRALFORGE_SUCCESS
+        ),
     )
-    embed.set_author(name="WORKSPACE")
+    embed.set_author(name="OPERATIONS CENTER")
     if state.queue_ready_count:
         focus = f"{state.queue_ready_count} item{'s' if state.queue_ready_count != 1 else ''} ready to post"
     elif state.clip_pending_count:
@@ -3540,12 +3585,19 @@ def control_center_embed(state: ControlCenterState) -> discord.Embed:
         focus = "ViralForge is preparing your active video"
     else:
         focus = "Add a video or find a new source"
-    embed.add_field(name="Current focus", value=focus, inline=False)
+    embed.add_field(name="Status", value="Needs review" if needs_attention else "Healthy")
+    embed.add_field(name="Current focus", value=focus)
     embed.add_field(
         name="Needs attention",
         value=(
             f"{state.failure_count} issue{'s' if state.failure_count != 1 else ''} need review\n"
-            f"{state.source_review_count + state.opportunity_pending_count + state.clip_pending_count} video decision{'s' if state.source_review_count + state.opportunity_pending_count + state.clip_pending_count != 1 else ''} waiting"
+            if state.failure_count
+            else ""
+        )
+        + (
+            f"{needs_attention - state.failure_count} item{'s' if needs_attention - state.failure_count != 1 else ''} waiting"
+            if needs_attention - state.failure_count
+            else "No action needed"
         ),
         inline=True,
     )
@@ -3558,10 +3610,11 @@ def control_center_embed(state: ControlCenterState) -> discord.Embed:
         inline=True,
     )
     embed.add_field(
-        name="How ViralForge is helping",
-        value="Accepted sources are prepared automatically. Publishing waits for your approval.",
+        name="Next action",
+        value=focus,
         inline=False,
     )
+    embed.set_footer(text="ViralForge Operations Center")
     return embed
 
 
@@ -3675,7 +3728,7 @@ class ProjectPicker(discord.ui.Select["ProjectListView"]):
             options=[
                 discord.SelectOption(
                     label=(project.source_title or "Production project")[:100],
-                    description=project.status[:100],
+                    description=friendly_project_status(project.status)[:100],
                     value=str(project.id),
                 )
                 for project in projects[:25]
@@ -3896,10 +3949,7 @@ class ControlCenterView(discord.ui.View):
             return
         status = operational_status(self.settings)
         await interaction.response.send_message(
-            "\n".join(
-                f"{name}: {'ready' if ready else 'not configured'}"
-                for name, ready in status.items()
-            ),
+            embed=operational_status_embed(status),
             ephemeral=True,
         )
 
@@ -4857,14 +4907,24 @@ class OperatorHomeView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Workspace Details", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:more")
-    async def more(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+    @discord.ui.button(label="Switch Brand", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:brand")
+    async def switch_brand(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
         if not await self._authorized(interaction):
             return
+        brands = await asyncio.to_thread(self.repository.brands)
         await interaction.response.send_message(
-            "Workspace details and staff diagnostics. These do not change the active workflow.",
-            view=AdvancedOperatorView(self.repository, self.settings), ephemeral=True,
+            "Select the brand you want to operate.",
+            view=BrandSelectionView(brands, self.repository, self.settings),
+            ephemeral=True,
         )
+
+    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:refresh")
+    async def refresh(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+        if not await self._authorized(interaction):
+            return
+        state = await asyncio.to_thread(self.repository.control_center)
+        self.apply_state(state)
+        await interaction.response.edit_message(embed=control_center_embed(state), view=self)
 
 
 class AdvancedOperatorView(discord.ui.View):
@@ -4880,7 +4940,7 @@ class AdvancedOperatorView(discord.ui.View):
     @discord.ui.button(label="System Details", style=discord.ButtonStyle.secondary)
     async def status(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
         status = operational_status(self.settings)
-        await interaction.response.send_message("\n".join(f"{name}: {'ready' if value else 'not configured'}" for name, value in status.items()), ephemeral=True)
+        await interaction.response.send_message(embed=operational_status_embed(status), ephemeral=True)
 
     @discord.ui.button(label="Choose Brand", style=discord.ButtonStyle.secondary)
     async def brands(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:

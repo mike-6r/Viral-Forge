@@ -244,12 +244,13 @@ def test_control_center_summarizes_persisted_workflow(session: Session, monkeypa
     assert state.total_projects == 1 and state.source_review_count == 1
     assert state.active_brand_name
     assert "1 source awaiting review" in " ".join(field.value for field in embed.fields)
-    assert len(OperatorHomeView(repository, Settings()).children) == 4
+    assert len(OperatorHomeView(repository, Settings()).children) == 5
     assert [child.label for child in OperatorHomeView(repository, Settings()).children] == [
         "View Progress",
         "Find Sources",
         "Add Video",
-        "Workspace Details",
+        "Switch Brand",
+        "Refresh",
     ]
 
 
