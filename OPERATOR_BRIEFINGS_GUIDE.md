@@ -5,3 +5,5 @@
 Both endpoints are brand-scoped and require an authenticated member of that brand. They report persisted facts only; unavailable social metrics are omitted rather than fabricated.
 
 Discord operators can use `/viralforge operations` for the same compact overview. Notifications should be sent only to the configured operations/review channel by the existing Discord setup, never in a repeated loop.
+
+When the scheduler reaches the configured local briefing/report time, it persists one report per brand and local date. The Discord bot polls pending reports every five minutes, posts each one in the configured review channel, and records the message ID only after delivery succeeds. Failed delivery remains pending for a later retry; duplicate summaries are not created.

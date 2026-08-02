@@ -3,9 +3,10 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 
 from app.brands.models import Brand, BrandMembership, ContentProfile, Workspace
-from app.operations.models import OperatorTask
+from app.operations.models import OperationsReport, OperatorTask
 from app.operations.service import (
     briefing,
+    create_due_reports,
     health_summary,
     is_quiet_or_paused,
     refresh_operational_state,
@@ -60,6 +61,22 @@ def test_briefing_and_health_do_not_create_publish_work(session):
     assert summary["state"] == "Healthy"
     assert report["videos_found"] == 0
     assert report["content_ready"] == 0
+
+
+def test_daily_reports_are_deduplicated_and_respect_quiet_hours(session):
+    brand = _brand(session)
+    profile = session.scalar(select(ContentProfile).where(ContentProfile.brand_id == brand.id))
+    assert profile is not None
+    profile.operations_schedule_json = {
+        "morning_briefing_hour": 9,
+        "evening_report_hour": 18,
+        "quiet_hours": [{"start": "22:00", "end": "06:00"}],
+    }
+    session.commit()
+    afternoon_utc = datetime(2026, 8, 3, 23, tzinfo=UTC)  # 19:00 America/New_York
+    assert create_due_reports(session, brand.id, afternoon_utc) == 2
+    assert create_due_reports(session, brand.id, afternoon_utc) == 0
+    assert session.scalar(select(func.count()).select_from(OperationsReport).where(OperationsReport.brand_id == brand.id)) == 2
 
 
 def test_operations_api_is_brand_scoped_and_requires_an_actor(client, session):  # type: ignore[no-untyped-def]

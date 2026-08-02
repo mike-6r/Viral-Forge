@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.brands.models import Brand, ContentProfile, DestinationAccount
 from app.content_packages.models import ContentPackage
 from app.discovery.models import DiscoveredMedia, DiscoveryStatus
-from app.operations.models import OperationsAlert, OperatorTask
+from app.operations.models import OperationsAlert, OperationsReport, OperatorTask
 from app.production.models import PostingQueueItem, ProductionClip, ProductionProject
 
 
@@ -175,6 +175,81 @@ def evening_report(session: Session, brand_id: uuid.UUID, at: datetime | None = 
     return report
 
 
+def _json_report(report: dict[str, object]) -> dict[str, object]:
+    """Convert report objects to a durable, credential-free JSON payload."""
+    attention = _object_list(report.get("attention"))
+    return {
+        **report,
+        "attention": [
+            {"title": item.title, "priority": item.priority, "reason": item.reason}
+            for item in attention
+            if isinstance(item, OperatorTask)
+        ],
+    }
+
+
+def create_due_reports(session: Session, brand_id: uuid.UUID, at: datetime) -> int:
+    """Create at most one briefing and one evening report for the brand/date."""
+    config = schedule_for(session, brand_id)
+    try:
+        local = at.astimezone(ZoneInfo(str(config["timezone"])))
+    except Exception:
+        local = at
+    if is_quiet_or_paused(config, at):
+        return 0
+    created = 0
+    for report_type, hour, builder in (
+        ("MORNING_BRIEFING", _integer(config["morning_briefing_hour"], 9), briefing),
+        ("EVENING_REPORT", _integer(config["evening_report_hour"], 18), evening_report),
+    ):
+        if local.hour < hour:
+            continue
+        existing = session.scalar(
+            select(OperationsReport).where(
+                OperationsReport.brand_id == brand_id,
+                OperationsReport.report_type == report_type,
+                OperationsReport.local_date == local.date().isoformat(),
+            )
+        )
+        if existing is None:
+            session.add(
+                OperationsReport(
+                    brand_id=brand_id,
+                    report_type=report_type,
+                    local_date=local.date().isoformat(),
+                    summary_json=_json_report(builder(session, brand_id, at)),
+                )
+            )
+            created += 1
+    if created:
+        session.commit()
+    return created
+
+
+def pending_reports(session: Session, limit: int = 20) -> list[OperationsReport]:
+    return list(
+        session.scalars(
+            select(OperationsReport)
+            .where(OperationsReport.status == "PENDING_DELIVERY")
+            .order_by(OperationsReport.created_at)
+            .limit(limit)
+        )
+    )
+
+
+def mark_report_delivered(
+    session: Session, report_id: uuid.UUID, channel_id: int, message_id: int
+) -> None:
+    report = session.get(OperationsReport, report_id)
+    if report is None or report.status != "PENDING_DELIVERY":
+        return
+    report.status = "DELIVERED"
+    report.delivered_at = now()
+    report.discord_channel_id = str(channel_id)
+    report.discord_message_id = str(message_id)
+    session.commit()
+
+
 def timeline(session: Session, brand_id: uuid.UUID, limit: int = 50) -> list[dict[str, object]]:
     from app.audit.models import AuditEvent
 
@@ -225,5 +300,6 @@ def run_due_operations(session: Session, at: datetime | None = None) -> int:
         if is_quiet_or_paused(schedule_for(session, brand.id), at):
             continue
         refresh_operational_state(session, brand.id)
+        create_due_reports(session, brand.id, at)
         processed += 1
     return processed

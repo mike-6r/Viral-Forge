@@ -40,3 +40,28 @@ class OperatorTask(UUIDTimestampMixin, Base):
     action_label: Mapped[str] = mapped_column(String(255))
     payload_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class OperationsReport(UUIDTimestampMixin, Base):
+    """A scheduled briefing/report with explicit Discord delivery state."""
+
+    __tablename__ = "operations_reports"
+    __table_args__ = (
+        UniqueConstraint(
+            "brand_id",
+            "report_type",
+            "local_date",
+            name="uq_operations_report_brand_type_date",
+        ),
+    )
+
+    brand_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("brands.id"), index=True
+    )
+    report_type: Mapped[str] = mapped_column(String(30), index=True)
+    local_date: Mapped[str] = mapped_column(String(10), index=True)
+    status: Mapped[str] = mapped_column(String(30), default="PENDING_DELIVERY", index=True)
+    summary_json: Mapped[dict[str, object]] = mapped_column(JSON, default=dict)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    discord_channel_id: Mapped[str | None] = mapped_column(String(50))
+    discord_message_id: Mapped[str | None] = mapped_column(String(50))

@@ -60,7 +60,7 @@ from app.discovery.models import DiscoveredMedia, DiscoveryRun, DiscoverySource,
 from app.discovery.service import approve_media, reject_media, run_source
 from app.ingestion.storage import LocalFilesystemStorage
 from app.media_preview.service import IssuedPreview, PreviewError, issue_preview
-from app.operations.models import OperationsAlert, OperatorTask
+from app.operations.models import OperationsAlert, OperationsReport, OperatorTask
 from app.operations.service import briefing as operations_briefing
 from app.operations.service import (
     evening_report as operations_evening_report,
@@ -69,10 +69,12 @@ from app.operations.service import (
     health_summary as operations_health_summary,
 )
 from app.operations.service import (
-    queue_metrics as operations_queue_metrics,
+    mark_report_delivered,
+    pending_reports,
+    refresh_operational_state,
 )
 from app.operations.service import (
-    refresh_operational_state,
+    queue_metrics as operations_queue_metrics,
 )
 from app.operations.service import (
     timeline as operations_timeline,
@@ -1256,6 +1258,22 @@ class ProductionRepository:
         session = next(self._session())
         try:
             return refresh_operational_state(session, self._default_brand_in_session(session).id)
+        finally:
+            session.close()
+
+    def pending_operations_reports(self) -> list[OperationsReport]:
+        session = next(self._session())
+        try:
+            return pending_reports(session)
+        finally:
+            session.close()
+
+    def mark_operations_report_delivered(
+        self, report_id: uuid.UUID, channel_id: int, message_id: int
+    ) -> None:
+        session = next(self._session())
+        try:
+            mark_report_delivered(session, report_id, channel_id, message_id)
         finally:
             session.close()
 
@@ -5040,6 +5058,29 @@ def operations_embed(summary: dict[str, object]) -> discord.Embed:
     return embed
 
 
+def operations_report_embed(report: OperationsReport) -> discord.Embed:
+    """Render one persisted scheduled report without exposing internal details."""
+    summary = report.summary_json
+    health = summary.get("health", {})
+    queue = summary.get("queue", {})
+    if not isinstance(health, dict):
+        health = {}
+    if not isinstance(queue, dict):
+        queue = {}
+    title = "Morning Producer Briefing" if report.report_type == "MORNING_BRIEFING" else "Evening Operations Report"
+    embed = discord.Embed(title=title, description=f"Brand report for {report.local_date}.", color=VIRALFORGE_BLUE)
+    embed.add_field(name="Discovery", value=f"Videos found: {summary.get('videos_found', 0)}")
+    embed.add_field(name="Processing", value=f"Rendered: {summary.get('rendered', 0)}\nContent ready: {summary.get('content_ready', 0)}")
+    embed.add_field(name="Brand health", value=f"{health.get('state', 'Unknown')} · {health.get('score', '—')}/100")
+    if queue:
+        embed.add_field(name="Queue", value=f"{queue.get('health', 'Unknown')} · {queue.get('ready', 0)} ready", inline=False)
+    attention = summary.get("attention", [])
+    if isinstance(attention, list) and attention:
+        embed.add_field(name="Attention required", value="\n".join(f"• {item.get('title', 'Review item')}" for item in attention if isinstance(item, dict)), inline=False)
+    embed.set_footer(text="No content was published automatically.")
+    return embed
+
+
 class ViralForgeBot(discord.Client):
     def __init__(
         self, repository: ProductionRepository | None = None, settings: Settings | None = None
@@ -5052,6 +5093,7 @@ class ViralForgeBot(discord.Client):
         )
         self.discovery_repository = DiscoveryRepository(self.settings)
         self._business_presence_task: asyncio.Task[None] | None = None
+        self._operations_report_task: asyncio.Task[None] | None = None
         self._automod_recent: dict[tuple[int, int, int], int] = {}
         self.tree = app_commands.CommandTree(self)
         self.tree.add_command(
@@ -5099,6 +5141,7 @@ class ViralForgeBot(discord.Client):
             self.add_view(OpportunityReviewView(opportunity_state, self.repository, self.settings))
         register_business_commands(self)
         self._business_presence_task = asyncio.create_task(self._rotate_business_presence())
+        self._operations_report_task = asyncio.create_task(self._deliver_operations_reports())
         group = self.tree.get_command("viralforge")
         assert isinstance(group, app_commands.Group)
         discovery_group = self.tree.get_command("discovery")
@@ -5549,11 +5592,35 @@ class ViralForgeBot(discord.Client):
                 pass
             await asyncio.sleep(business_presence_interval())
 
+    async def _deliver_operations_reports(self) -> None:
+        """Deliver each persisted report at most once to the configured review channel."""
+        while not self.is_closed():
+            try:
+                reports = await asyncio.to_thread(self.repository.pending_operations_reports)
+                if reports:
+                    channel = await self.review_channel()
+                    for report in reports:
+                        message = await channel.send(embed=operations_report_embed(report))
+                        await asyncio.to_thread(
+                            self.repository.mark_operations_report_delivered,
+                            report.id,
+                            channel.id,
+                            message.id,
+                        )
+            except Exception:
+                # Report delivery is retried on the next bounded interval.
+                pass
+            await asyncio.sleep(300)
+
     async def close(self) -> None:
         if self._business_presence_task is not None:
             self._business_presence_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._business_presence_task
+        if self._operations_report_task is not None:
+            self._operations_report_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._operations_report_task
         await super().close()
 
 
