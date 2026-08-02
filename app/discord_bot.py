@@ -2348,16 +2348,23 @@ class OpportunityReviewView(discord.ui.View):
     ) -> None:
         if not await self._authorized(interaction):
             return
-        await interaction.response.defer(thinking=True)
+        # Defer the component update itself. Using a thinking response here
+        # creates a second ephemeral card instead of updating the review card
+        # the operator actually clicked.
+        await interaction.response.defer()
         try:
             opportunity = await asyncio.to_thread(
                 self.repository.decide_opportunity, self.state.opportunity.id, True
             )
-            self.state = await asyncio.to_thread(self.repository.opportunity_state, opportunity.id)
+            state = await asyncio.to_thread(self.repository.dashboard, opportunity.project_id)
         except ProductionError as error:
             await interaction.followup.send(user_error(error), ephemeral=True)
             return
-        await interaction.edit_original_response(embed=opportunity_embed(self.state), view=self)
+        await interaction.edit_original_response(
+            content="Clip approved. Rendering has started automatically; refresh this card for progress.",
+            embed=guided_project_embed(state),
+            view=GuidedProjectView(opportunity.project_id, self.repository, self.settings),
+        )
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
     async def reject(
@@ -2367,7 +2374,7 @@ class OpportunityReviewView(discord.ui.View):
             return
         # Decision writes can take longer than Discord's interaction window.
         # Acknowledge first so rejecting a suggestion is as reliable as approval.
-        await interaction.response.defer(thinking=True)
+        await interaction.response.defer()
         try:
             opportunity = await asyncio.to_thread(
                 self.repository.decide_opportunity, self.state.opportunity.id, False
@@ -3184,6 +3191,8 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         progress, next_step = "Source → Finding moments", "ViralForge is preparing clip suggestions."
     elif state.pending_opportunity_count:
         progress, next_step = "Source → Suggested clips", "Choose the clip you want to use next."
+    elif state.approved_opportunity_count and not state.total_clips:
+        progress, next_step = "Source → Rendering", "ViralForge is creating your approved clip automatically."
     elif state.opportunity_count and not state.total_clips:
         progress, next_step = "Source → Suggestions reviewed", "No clips were selected. Choose another video when ready."
     elif state.total_clips and state.approved < state.total_clips:
@@ -3288,6 +3297,12 @@ class GuidedProjectView(discord.ui.View):
                     ephemeral=True,
                 )
                 return
+        if state.approved_opportunity_count and not state.total_clips:
+            await interaction.response.send_message(
+                "Your approved clip is rendering automatically. Refresh this project for progress.",
+                ephemeral=True,
+            )
+            return
         if state.opportunity_count and not state.total_clips:
             await interaction.response.send_message(
                 "All suggested clips were declined. No clips will be rendered; choose another video when ready.",
