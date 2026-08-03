@@ -3,3 +3,6 @@ priority_levels: [low, normal, high, urgent, critical]
 private_category_key: private_requests
 staff_roles: [owner, administrator, operations_lead, customer_success, support_team]
 audit_events: [opened, assigned, closed, reopened]
+hero_asset: viralforge-ticket-hero.png
+title: Private Support
+description: "This request is visible only to you and the support team."

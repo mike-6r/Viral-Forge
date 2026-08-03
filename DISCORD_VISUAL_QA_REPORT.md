@@ -18,7 +18,11 @@ No live Discord resource was created, changed, or deleted by this QA pass.
   area, staff-only Operations area, and private ticket flow.
 - Human-readable workflow labels: **Source Added**, **Preparing Video**,
   **Ready for Review**, **Clips Ready**, **Content Package Ready**, **Ready for
-  Publishing Decision**, **Published**, and **Needs Attention**.
+  Decision**, **Published**, and **Needs Attention**.
+- The supplied final Discord-native hero banner set is mapped to welcome,
+  access, announcements, overview/how-it-works, plans, workspace, review,
+  analytics, support, Operations, ready-for-decision, and private-ticket
+  panels. Panel copy was shortened to let the banners carry the visual identity.
 - Normal workflow cards no longer need to expose raw lifecycle values; technical
   diagnostics belong in staff-only Advanced Details.
 - A non-destructive `/setup` cleanup preview that identifies legacy/demo
@@ -53,22 +57,24 @@ No live Discord resource was created, changed, or deleted by this QA pass.
 8. Complete the screenshot-based visual QA checklist on desktop and mobile, then
    update the verification table below with real evidence.
 
-## Assets added
+## Final hero banners installed
 
-- `viralforge-access.png`
-- `viralforge-overview.png`
-- `viralforge-workflow.png`
-- `viralforge-plans.png`
-- `viralforge-workspace.png`
-- `viralforge-review.png`
-- `viralforge-analytics.png`
-- `viralforge-support.png`
-- `viralforge-ops-center.png`
+- `viralforge-welcome-hero.png`
+- `viralforge-access-hero.png`
+- `viralforge-announcements-hero.png`
+- `viralforge-workflow-hero.png`
+- `viralforge-plans-hero.png`
+- `viralforge-workspace-hero.png`
+- `viralforge-review-hero.png`
+- `viralforge-analytics-hero.png`
+- `viralforge-support-hero.png`
+- `viralforge-ops-center-hero.png`
+- `viralforge-ready-to-post-hero.png`
+- `viralforge-ticket-hero.png`
 
 These are registered in `ASSET_MANIFEST.md` and attached by the official panel
-publisher only to the pages they support. The access and workspace banners were
-generated for this pass; the remaining files are matched page-specific assets
-from the existing ViralForge visual system, published under their final names.
+publisher only to the pages they support. The final supplied banners supersede
+the earlier generated/temporary panel images for managed embeds.
 
 ## Local verification completed
 

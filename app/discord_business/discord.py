@@ -67,19 +67,22 @@ def can_manage_member(actor: discord.Member, target: discord.Member) -> bool:
 ACTION_LABELS = {
     "view_platform": "Platform Overview",
     "choose_role": "Set Up Access",
-    "start_onboarding": "Start Onboarding",
-    "open_support": "Open Ticket",
-    "how_it_works": "How It Works",
+    "start_onboarding": "Continue Onboarding",
+    "open_support": "Open Support",
+    "open_ticket": "Open Ticket",
+    "how_it_works": "See How It Works",
     "view_pricing": "View Plans",
     "request_access": "Request Access",
     "talk_to_sales": "Talk to Sales",
     "view_publishing_flow": "Review Workflow",
     "view_tickets": "Open Tickets",
     "open_tickets": "Open Tickets",
-    "open_review_queue": "Review Queue",
-    "ready_to_post": "Ready to Post",
+    "open_review_queue": "Open Review Queue",
+    "ready_to_post": "Ready for Decision",
+    "view_ready_queue": "View Queue",
     "add_video": "Add Video",
-    "refresh": "Refresh",
+    "refresh": "Check Progress",
+    "return_to_ops_center": "Return to Ops Center",
     "open_logs": "Ticket Activity",
     "submit_feature": "Submit Request",
 }
@@ -179,6 +182,29 @@ def _embed_files(config: dict[str, Any], key: str) -> list[discord.File]:
         item.get("asset") if item.get("hero_asset") else None,
     ]
     return [discord.File(root / name, filename=name) for name in dict.fromkeys(names) if name and (root / name).is_file()]
+
+
+def _private_ticket_embed(config: dict[str, Any], ticket: DiscordTicket) -> discord.Embed:
+    settings = config["tickets"]
+    embed = discord.Embed(
+        title=settings["title"],
+        description=settings["description"],
+        color=BUSINESS_COLOR,
+    )
+    embed.add_field(name="Issue", value=ticket.ticket_type.replace("_", " ").title(), inline=True)
+    embed.add_field(name="Status", value="Awaiting Support", inline=True)
+    embed.add_field(name="Next Step", value="A support teammate will review this request.", inline=False)
+    asset = settings.get("hero_asset")
+    root = Path(config["branding"]["asset_directory"])
+    if asset and (root / asset).is_file():
+        embed.set_image(url=f"attachment://{asset}")
+    return embed
+
+
+def _private_ticket_files(config: dict[str, Any]) -> list[discord.File]:
+    asset = config["tickets"].get("hero_asset")
+    root = Path(config["branding"]["asset_directory"])
+    return [discord.File(root / asset, filename=asset)] if asset and (root / asset).is_file() else []
 
 
 def _resource(
@@ -573,7 +599,7 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
             label=ACTION_LABELS[action],
             style=(
                 discord.ButtonStyle.primary
-                if action in {"start_onboarding", "open_support", "request_access"}
+                if action in {"start_onboarding", "open_support", "open_ticket", "request_access"}
                 else discord.ButtonStyle.secondary
             ),
             custom_id=f"viralforge:business:panel:{panel_key}:{action}",
@@ -595,7 +621,7 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
                 ephemeral=True,
             )
             return
-        if self.action == "open_support":
+        if self.action in {"open_support", "open_ticket"}:
             await interaction.response.send_message(
                 "**Get Support**\nChoose a topic to open one private request. Do not share credentials or private media.",
                 view=SupportTopicView(config),
@@ -620,7 +646,7 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
                 ephemeral=True,
             )
             return
-        if self.action == "ready_to_post":
+        if self.action in {"ready_to_post", "view_ready_queue"}:
             await interaction.response.send_message(
                 "Use `/viralforge ready-to-post` to review content waiting for a human publishing decision.",
                 ephemeral=True,
@@ -634,6 +660,7 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
             "view_tickets": "ticket_logs",
             "open_tickets": "ticket_logs",
             "open_logs": "ticket_logs",
+            "return_to_ops_center": "ops_center",
         }.get(self.action)
         if self.action == "refresh":
             await interaction.response.send_message(
@@ -835,7 +862,8 @@ async def _open_ticket(interaction: discord.Interaction, ticket_type: str, prior
     finally:
         session.close()
     await channel.send(
-        f"Ticket #{ticket.ticket_number} opened for {interaction.user.mention}. Please do not share credentials or private source media."
+        embed=_private_ticket_embed(config, ticket),
+        files=_private_ticket_files(config),
     )
     await interaction.response.send_message(
         f"Private support ticket created: {channel.mention}", ephemeral=True

@@ -7,6 +7,10 @@ preview, and regression coverage are implemented locally. Final live deployment
 is currently blocked because the locally configured Discord bot credential is
 rejected by Discord with `401 Unauthorized` before it can connect to the guild.
 
+The final Discord-native hero banner set is installed locally. Managed panels
+use image-first embeds with concise copy so the banner, rather than a large block
+of text, carries the visual identity.
+
 The current real guild also has legacy/demo clutter that requires an owner-reviewed
 cleanup. Do not claim commercial live readiness until `/setup` has completed
 successfully against the real guild and the old visible clutter has been removed

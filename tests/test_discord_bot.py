@@ -478,7 +478,14 @@ def test_producer_advice_view_is_concise_and_exposes_review_controls():
     )
     view = ProducerRecommendationView(project_id, [item], ProductionRepository(Settings()), Settings(discord_allowed_role_ids="1"))
     labels = {str(getattr(child, "label", "")) for child in view.children}
-    assert {"Approve", "Reject", "Add / Edit Note", "More Details", "Back", "Home"} <= labels
+    assert {
+        "Approve",
+        "Reject",
+        "Add / Edit Note",
+        "View Advanced Details",
+        "Back",
+        "Home",
+    } <= labels
     embed = producer_advice_embed(item, 0, 1)
     assert "Moderate (60%)" in next(field.value for field in embed.fields if field.name == "Confidence")
     assert "id" not in embed.description.lower()

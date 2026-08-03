@@ -1837,13 +1837,13 @@ FRIENDLY_PROJECT_STATUSES = {
     "CONTENT_READY": "Content Package Ready",
     "PUBLISHED": "Published",
     "FAILED": "Needs Attention",
-    "REJECTED": "Rejected",
-    "QUEUED": "Waiting to start",
-    "RUNNING": "Processing",
+    "REJECTED": "Not selected",
+    "QUEUED": "Waiting to Start",
+    "RUNNING": "In Progress",
     "COMPLETED": "Complete",
-    "PENDING": "Needs review",
+    "PENDING": "Awaiting Review",
     "NOT_QUEUED": "Not scheduled",
-    "READY_TO_POST": "Ready for Publishing Decision",
+    "READY_TO_POST": "Ready for Decision",
 }
 
 
@@ -1912,22 +1912,26 @@ def dashboard_embed(state: DashboardState) -> discord.Embed:
         color=VIRALFORGE_CORAL,
     )
     embed.set_author(name="ADVANCED DETAILS")
-    embed.add_field(name="Status", value=project.status, inline=True)
-    embed.add_field(name="Source", value=project.source_url, inline=False)
+    embed.add_field(name="Timeline: Stage", value=project.status, inline=True)
     embed.add_field(
-        name="Duration",
+        name="Source",
+        value=(project.source_title or "Source record available")[:1024],
+        inline=False,
+    )
+    embed.add_field(
+        name="Timeline: Duration",
         value=f"{project.source_duration_seconds:.1f}s"
         if project.source_duration_seconds
         else "Not downloaded",
         inline=True,
     )
-    embed.add_field(name="Clips", value=str(state.total_clips), inline=True)
+    embed.add_field(name="Timeline: Clips", value=str(state.total_clips), inline=True)
     embed.add_field(
-        name="Approved / Rejected / Queued",
+        name="Timeline: Decisions",
         value=f"{state.approved} / {state.rejected} / {state.queued}",
         inline=False,
     )
-    embed.add_field(name="Recommended action", value=lifecycle_next_action(state), inline=False)
+    embed.add_field(name="Staff Actions", value=lifecycle_next_action(state), inline=False)
     if state.analysis is not None:
         analysis = state.analysis
         technical = (
@@ -1941,12 +1945,12 @@ def dashboard_embed(state: DashboardState) -> discord.Embed:
             else "No transcript segments"
         )
         embed.add_field(
-            name="Analysis",
+            name="Analysis: Technical",
             value=f"{analysis.status} · {technical}",
             inline=False,
         )
         embed.add_field(
-            name="Analysis timeline",
+            name="Analysis: Timeline",
             value=(
                 f"{state.analysis_segment_count} segments · {state.analysis_event_count} events · "
                 f"{state.scene_count} scenes · {state.speech_duration_seconds:.1f}s speech · {transcript}"
@@ -1954,7 +1958,7 @@ def dashboard_embed(state: DashboardState) -> discord.Embed:
             inline=False,
         )
         embed.add_field(
-            name="Real analysis progress",
+            name="Analysis: Progress",
             value=(
                 f"{analysis.analysis_version} · {analysis.current_stage or 'stage unavailable'} "
                 f"{analysis.progress_percent:.0f}% · provider {analysis.metadata_json.get('provider', 'unknown')}"
@@ -1964,46 +1968,46 @@ def dashboard_embed(state: DashboardState) -> discord.Embed:
         warnings = analysis.metadata_json.get("warnings", [])
         if isinstance(warnings, list) and warnings:
             embed.add_field(
-                name="Analysis warnings",
+                name="Quality: Analysis Warnings",
                 value="\n".join(str(item) for item in warnings)[:1024],
                 inline=False,
             )
     if state.opportunity_count:
         embed.add_field(
-            name="Clip opportunities",
+            name="Quality: Clip Opportunities",
             value=f"{state.opportunity_count} ranked · {state.approved_opportunity_count} approved",
             inline=False,
         )
     if state.source:
         source = state.source
         embed.add_field(
-            name="Selected source",
+            name="Source: Identity",
             value=f"{source.platform} · {source.uploader_name or 'Unknown uploader'}",
             inline=False,
         )
         embed.add_field(
-            name="Source quality",
+            name="Quality: Source",
             value=f"{source.quality_score:.0f}/100 · {source.quality_status}",
             inline=True,
         )
         embed.add_field(
-            name="Original confidence",
+            name="Quality: Source Confidence",
             value=f"{source.original_source_confidence:.0%} · repost risk {source.repost_likelihood:.0%}",
             inline=True,
         )
         embed.add_field(
-            name="Watermark",
+            name="Quality: Watermark",
             value=f"{source.watermark_status} ({source.watermark_confidence:.0%})",
             inline=False,
         )
         embed.add_field(
-            name="Selected-source reason",
+            name="Source: Selection Reason",
             value=(source.selected_source_reason or "No decision explanation available.")[:1024],
             inline=False,
         )
         if source.warnings:
             embed.add_field(
-                name="Warnings",
+                name="Quality: Warnings",
                 value="\n".join(f"• {warning}" for warning in source.warnings)[:1024],
                 inline=False,
             )
@@ -3129,7 +3133,7 @@ class ProducerRecommendationView(discord.ui.View):
                 ProducerNoteModal(self.item, self.repository, self)
             )
 
-    @discord.ui.button(label="More Details", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="View Advanced Details", style=discord.ButtonStyle.secondary)
     async def details(
         self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
     ) -> None:
@@ -3644,7 +3648,7 @@ class OpportunityReviewView(discord.ui.View):
             view=GuidedProjectView(opportunity.project_id, self.repository, self.settings),
         )
 
-    @discord.ui.button(label="View Details", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="View Advanced Details", style=discord.ButtonStyle.secondary)
     async def details(
         self, interaction: discord.Interaction, _: discord.ui.Button["OpportunityReviewView"]
     ) -> None:
@@ -4197,8 +4201,8 @@ def operator_attention_summary(state: ControlCenterState) -> str:
 def ready_to_post_embed(
     items: list[tuple[PostingQueueItem, ProductionClip, ProductionProject]], settings: Settings
 ) -> discord.Embed:
-    embed = discord.Embed(title="Content ready for approval", color=VIRALFORGE_CORAL)
-    embed.set_author(name="READY TO POST")
+    embed = discord.Embed(title="Ready for Decision", color=VIRALFORGE_CORAL)
+    embed.set_author(name="PUBLISHING DECISION")
     if not items:
         embed.description = "No finished content is waiting right now."
         return embed
@@ -4618,7 +4622,7 @@ def legacy_guided_project_embed(state: DashboardState) -> discord.Embed:
     if project.last_error:
         embed.add_field(
             name="Needs attention",
-            value="This video could not continue automatically. Open More Details for the safe error reference.",
+            value="This video could not continue automatically. Open Advanced Details for the safe error reference.",
             inline=False,
         )
     return embed
@@ -4698,10 +4702,10 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         current_stage = "Clips Ready"
         next_step = "Approve the clips you want to prepare for posting."
     elif state.queued:
-        eyebrow = "READY FOR PUBLISHING DECISION"
+        eyebrow = "READY FOR DECISION"
         title = "Content ready for approval"
         description = "Your post is ready. Review the final caption, destination, and schedule before publishing."
-        current_stage = "Ready for Publishing Decision"
+        current_stage = "Ready for Decision"
         next_step = "Review post details and make an explicit publishing decision."
 
     embed = discord.Embed(title=title, description=description, color=VIRALFORGE_CORAL)
@@ -4728,7 +4732,7 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
                 state.analysis is not None and state.analysis.status == "COMPLETED",
             ),
             ("Clips Ready", state.total_clips > 0),
-            ("Ready for Publishing Decision", state.queued > 0),
+            ("Ready for Decision", state.queued > 0),
         ]
         progress = "\n".join(
             f"{'Complete' if complete else 'Pending'} — {label}" for label, complete in milestones
@@ -4941,7 +4945,7 @@ class GuidedProjectView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="Refresh Status",
+        label="Check Progress",
         style=discord.ButtonStyle.secondary,
         custom_id="viralforge:guided:refresh",
     )

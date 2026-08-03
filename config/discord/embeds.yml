@@ -5,14 +5,14 @@ embeds:
     title: ViralForge
     description: "Review-first content operations for short-form brands."
     color: "#FF4F2E"
-    asset: viralforge-welcome-v2.png
+    asset: viralforge-welcome-hero.png
     hero_asset: true
     show_icon: true
     show_footer: true
     fields:
-      - {name: Discover, value: "Find or add approved source material."}
-      - {name: Review, value: "Approve clips, metadata, context, and publishing readiness."}
-      - {name: Decide, value: "Approved work waits for an explicit human publishing decision."}
+      - {name: Submit, value: "Add authorized source material."}
+      - {name: Review, value: "Review clips and content packages before anything goes live."}
+      - {name: Decide, value: "Make human publishing decisions from one workspace."}
     actions: [choose_role, how_it_works, open_support]
   standards:
     channel: welcome
@@ -28,112 +28,112 @@ embeds:
   choose_roles:
     channel: access
     eyebrow: ACCESS
-    title: Set Up Your Access
-    description: "Choose your account type and the updates you want. Profile choices never grant operator authority."
+    title: Set Up Access
+    description: "Choose how you use ViralForge so the server shows the right tools and notifications."
     color: "#5B8CFF"
-    asset: viralforge-access.png
+    asset: viralforge-access-hero.png
     hero_asset: true
     show_footer: true
     fields:
-      - {name: Step 1, value: "Choose Creator, Brand, or Agency."}
-      - {name: Step 2, value: "Choose Product Updates, Workflow Alerts, Creator Tips, Case Studies, or Community Events."}
-      - {name: Step 3, value: "Continue onboarding or open a private support request."}
+      - {name: Account type, value: "Choose Creator, Brand, or Agency."}
+      - {name: Notifications, value: "Choose only the updates you want."}
+      - {name: Continue, value: "Finish onboarding when you are ready."}
     actions: []
   announcements:
     channel: announcements
     eyebrow: OFFICIAL UPDATES
-    title: Announcements
-    description: "Platform changes, maintenance, release notes, and important operator notices appear here."
+    title: Platform Updates
+    description: "Official product updates, maintenance notes, and release announcements."
     color: "#FF4F2E"
-    show_footer: true
+    asset: viralforge-announcements-hero.png
+    hero_asset: true
+    show_footer: false
     fields:
       - {name: Read-only by design, value: "Reply in Support or Community so official updates stay easy to scan."}
     actions: []
   product_overview:
     channel: product_overview
     eyebrow: PLATFORM
-    title: One Clear Content Workflow
-    description: "Keep source discovery, clip preparation, review, publishing decisions, and performance learning in one organized workspace."
+    title: One Content Workflow
+    description: "Keep source discovery, clip preparation, review, publishing decisions, and performance learning connected."
     color: "#FF4F2E"
-    asset: viralforge-overview.png
+    asset: viralforge-workflow-hero.png
     hero_asset: true
-    show_footer: true
+    show_footer: false
     fields:
-      - {name: Source, value: "Add approved sources or manual video URLs."}
-      - {name: Prepare, value: "Inspect and analyze authorized media."}
-      - {name: Review, value: "Approve creative work before any publishing decision."}
-      - {name: Decide, value: "Ready-to-post never means automatic upload."}
+      - {name: Source, value: "Add authorized sources and videos."}
+      - {name: Prepare + Review, value: "Inspect media and approve creative work."}
+      - {name: Decide, value: "Ready for Decision never means automatic upload."}
     actions: [how_it_works, start_onboarding, view_pricing]
   how_it_works:
     channel: how_it_works
     eyebrow: WORKFLOW
-    title: From Source Video to Approved Post
-    description: "A review-first path from authorized material to a ready-to-post content package."
+    title: "Discover → Clip → Review → Decide"
+    description: "A review-first path from authorized source material to a ready-for-decision content package."
     color: "#5B8CFF"
-    asset: viralforge-workflow.png
+    asset: viralforge-workflow-hero.png
     hero_asset: true
-    show_footer: true
+    show_footer: false
     fields:
-      - {name: Discover + Analyze, value: "Find a source and identify strong moments with context."}
-      - {name: Clip + Review, value: "Prepare clips and review the creative output."}
-      - {name: Publish decision, value: "A person chooses whether and when approved content goes live."}
+      - {name: Discover + Clip, value: "Find authorized sources and prepare strong moments."}
+      - {name: Review, value: "Check creative output and context."}
+      - {name: Decide, value: "A person chooses whether approved content goes live."}
     actions: [start_onboarding, view_pricing, open_support]
   pricing:
     channel: pricing_and_access
     eyebrow: PLANS
-    title: Choose the Right Operating Level
-    description: "Access is reviewed privately so every workspace is configured for the right content operation."
+    title: Operating Levels
+    description: "Choose the access level that fits your content operation."
     color: "#FF4F2E"
-    asset: viralforge-plans.png
+    asset: viralforge-plans-hero.png
     hero_asset: true
-    show_footer: true
+    show_footer: false
     fields:
-      - {name: Creator, value: "One focused content brand."}
-      - {name: Professional, value: "A team managing more review volume."}
+      - {name: Creator + Professional, value: "Focused brands and growing review volume."}
       - {name: Agency, value: "Multiple brands and client workspaces."}
       - {name: Enterprise, value: "Custom workflows, integrations, and dedicated support."}
-    actions: [request_access, talk_to_sales]
+    actions: [request_access, talk_to_sales, view_pricing]
   workspace_guide:
     channel: workspace_guide
     eyebrow: WORKSPACES
-    title: Keep Every Brand in Context
-    description: "Sources, reviews, publishing rules, analytics, and team access stay organized by brand."
+    title: Brand Workspaces
+    description: "Keep every brand's sources, review queue, publishing rules, and analytics organized."
     color: "#5B8CFF"
-    asset: viralforge-workspace.png
+    asset: viralforge-workspace-hero.png
     hero_asset: true
-    show_footer: true
+    show_footer: false
     fields:
-      - {name: Sources, value: "Approved channels, videos, feeds, websites, and uploads."}
-      - {name: Review queue, value: "Human decisions for sources, clips, and content packages."}
-      - {name: Rules + analytics, value: "Publishing requirements and performance feedback stay brand-scoped."}
+      - {name: Sources, value: "Keep approved sources in context."}
+      - {name: Review Queue, value: "Make human decisions for each brand."}
+      - {name: Analytics, value: "Keep rules and learning brand-scoped."}
     actions: [start_onboarding, open_support]
   review_and_publish:
     channel: review_and_publish
     eyebrow: REVIEW
-    title: Approve What Matters Before Anything Goes Live
-    description: "ViralForge prepares content. Operators make the final decisions."
+    title: Review Before Publishing
+    description: "ViralForge prepares the work. Operators make the decision."
     color: "#FF4F2E"
-    asset: viralforge-review.png
+    asset: viralforge-review-hero.png
     hero_asset: true
-    show_footer: true
+    show_footer: false
     fields:
-      - {name: Creative review, value: "Approve or reject clips and content packages."}
-      - {name: Rights + context, value: "Review attribution, warnings, source acceptance, and publishing readiness."}
-      - {name: Publishing decision, value: "Ready for Publishing Decision means ready for human action, not automatic upload."}
-    actions: [start_onboarding, how_it_works, open_support]
+      - {name: Creative Review, value: "Approve or reject clips and content packages."}
+      - {name: Context Check, value: "Review attribution, warnings, and source acceptance."}
+      - {name: Publishing Decision, value: "Ready for Decision still needs human action."}
+    actions: [open_review_queue, how_it_works, open_support]
   analytics:
     channel: analytics
     eyebrow: ANALYTICS
     title: Learn What Performs
-    description: "Turn official platform results and operator feedback into practical recommendations."
+    description: "Turn publishing results into practical feedback for future review decisions."
     color: "#5B8CFF"
-    asset: viralforge-analytics.png
+    asset: viralforge-analytics-hero.png
     hero_asset: true
-    show_footer: true
+    show_footer: false
     fields:
-      - {name: Signals, value: "Views, retention, engagement, follower growth, and other available metrics."}
-      - {name: Learnings, value: "Compare hooks, pacing, captions, topics, formats, and source quality."}
-      - {name: Decisions, value: "Recommendations support people; settings never change silently."}
+      - {name: Signals, value: "Use available performance signals."}
+      - {name: Patterns, value: "Compare hooks, pacing, topics, and formats."}
+      - {name: Recommendations, value: "People remain in control of decisions."}
     actions: [start_onboarding, open_support]
   onboarding:
     channel: onboarding
@@ -151,15 +151,15 @@ embeds:
   support:
     channel: support
     eyebrow: SUPPORT
-    title: Get Support
-    description: "Open a private request for access, workspace setup, source issues, publishing questions, plans, bugs, or custom workflows."
+    title: Open the Right Request
+    description: "Get private help for access, workspace setup, sources, publishing, plans, bugs, or custom workflows."
     color: "#5B8CFF"
-    asset: viralforge-support.png
+    asset: viralforge-support-hero.png
     hero_asset: true
-    show_footer: true
+    show_footer: false
     fields:
-      - {name: Keep it secure, value: "Never paste credentials, passwords, private media, or source files in public channels."}
-    actions: [open_support]
+      - {name: Keep it secure, value: "Never paste credentials, passwords, private media, or tokens in public channels."}
+    actions: [open_ticket]
   feature_requests:
     channel: feature_requests
     eyebrow: PRODUCT FEEDBACK
@@ -174,25 +174,26 @@ embeds:
     channel: ops_center
     eyebrow: OPERATIONS
     title: Operations Center
-    description: "Monitor active brands, review work, ready-to-post items, support activity, and automation health."
+    description: "Monitor active brands, review queues, ready-for-decision items, support activity, and workflow health."
     color: "#FF4F2E"
-    asset: viralforge-ops-center.png
+    asset: viralforge-ops-center-hero.png
     hero_asset: true
-    show_footer: true
+    show_footer: false
     fields:
-      - {name: Needs attention, value: "Start with failed jobs, blocked work, and escalated support."}
-      - {name: Review queue, value: "Open the next creative decision for the active brand."}
-      - {name: Ready to post, value: "Queue items still require an explicit human publishing decision."}
-      - {name: Next action, value: "Use the controls below; diagnostics stay in staff-only tools."}
+      - {name: Needs Attention, value: "Start with blocked work and escalated support."}
+      - {name: Review Queue, value: "Open the next creative decision for the active brand."}
+      - {name: Ready for Decision, value: "Publishing always requires a human decision."}
     actions: [open_review_queue, ready_to_post, add_video, open_tickets, refresh]
   ready_to_post:
     channel: ready_to_post
     eyebrow: PUBLISHING DECISION
-    title: Ready to Post
-    description: "Approved content waits here for an explicit destination, publish, or schedule decision."
+    title: Ready for Decision
+    description: "Approved content is waiting for a human publishing decision."
     color: "#F5A524"
-    show_footer: true
+    asset: viralforge-ready-to-post-hero.png
+    hero_asset: true
+    show_footer: false
     fields:
-      - {name: No silent publishing, value: "This queue never uploads content by itself."}
-      - {name: Before proceeding, value: "Confirm source, rights, moderation, clip, package, and destination requirements."}
-    actions: [open_review_queue, open_support]
+      - {name: Human decision required, value: "Ready for Decision does not mean automatic upload."}
+      - {name: Before proceeding, value: "Confirm source, rights, moderation, clip, package, and destination."}
+    actions: [ready_to_post, open_review_queue, return_to_ops_center]

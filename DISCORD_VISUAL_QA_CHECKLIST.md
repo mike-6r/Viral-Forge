@@ -25,6 +25,8 @@ below is checked and the final result is recorded in
 
 ## Client journey
 
+- [ ] Each major panel displays its assigned final Discord-native hero banner,
+  with the image carrying the primary visual identity.
 - [ ] No legacy/demo channel appears above `01 — START`.
 - [ ] `#welcome` reads as a concise product landing page with a single clear start path.
 - [ ] `#access` looks like a setup wizard and explains that role choices do not grant staff authority.
@@ -40,6 +42,8 @@ below is checked and the final result is recorded in
 - [ ] `#ops-center` points staff to Review Queue, Ready to Post, Add Video, Tickets, and Refresh.
 - [ ] `/viralforge home`, `/viralforge review`, `/viralforge project`, and `/viralforge ready-to-post` show a clear next action.
 - [ ] Normal cards show human-readable lifecycle labels only.
+- [ ] Ready-for-decision cards say **Ready for Decision**, never an enum label or
+  a claim that content will upload automatically.
 - [ ] Technical diagnostics and provider details are only shown through staff Advanced Details.
 - [ ] Ready-to-post copy confirms an explicit human publishing decision is still required.
 

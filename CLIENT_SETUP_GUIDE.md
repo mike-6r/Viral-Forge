@@ -30,6 +30,10 @@ publishing decision.
 
 - Distinct, dark SaaS-style assets and concise panels for access, overview,
   workflow, plans, workspace, review, analytics, support, and Operations.
+- The final Discord-native hero banner set is installed for welcome, access,
+  announcements, workflow, plans, workspace, review, analytics, support,
+  Operations, ready-for-decision, and private-ticket panels. The copy is kept
+  short so the images carry the visual identity.
 - A rules-first access path, public support entry point, member-only workspace
   area, staff-only Operations area, and private ticket flow.
 - Human-readable workflow labels: **Source Added**, **Preparing Video**,
@@ -77,7 +81,7 @@ The normal workflow is:
 4. Review the finished clip and content package.
 5. Make an explicit human decision when content is ready to post.
 
-**Ready for Publishing Decision** does not upload, schedule, or publish content
+**Ready for Decision** does not upload, schedule, or publish content
 by itself. It tells you the review gates are ready for a human decision.
 
 ## Get help

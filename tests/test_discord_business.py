@@ -3,8 +3,12 @@ from pathlib import Path
 from sqlalchemy import inspect
 
 from app.discord_bot import friendly_project_status
-from app.discord_business.discord import LEGACY_MANAGED_CHANNEL_NAMES, _setup_summary
-from app.discord_business.models import DiscordGuildConfig
+from app.discord_business.discord import (
+    LEGACY_MANAGED_CHANNEL_NAMES,
+    _private_ticket_embed,
+    _setup_summary,
+)
+from app.discord_business.models import DiscordGuildConfig, DiscordTicket
 from app.discord_business.service import (
     BusinessRepository,
     audience_role_keys,
@@ -106,6 +110,7 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
     assert hero_panels == {
         "welcome",
         "choose_roles",
+        "announcements",
         "product_overview",
         "how_it_works",
         "pricing",
@@ -114,18 +119,35 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
         "analytics",
         "support",
         "ops_center",
+        "ready_to_post",
     }
     assert {
-        "viralforge-access.png",
-        "viralforge-overview.png",
-        "viralforge-workflow.png",
-        "viralforge-plans.png",
-        "viralforge-workspace.png",
-        "viralforge-review.png",
-        "viralforge-analytics.png",
-        "viralforge-support.png",
-        "viralforge-ops-center.png",
-    } <= {panel.get("asset") for panel in config["embeds"]["embeds"].values()}
+        "welcome": "viralforge-welcome-hero.png",
+        "choose_roles": "viralforge-access-hero.png",
+        "announcements": "viralforge-announcements-hero.png",
+        "product_overview": "viralforge-workflow-hero.png",
+        "how_it_works": "viralforge-workflow-hero.png",
+        "pricing": "viralforge-plans-hero.png",
+        "workspace_guide": "viralforge-workspace-hero.png",
+        "review_and_publish": "viralforge-review-hero.png",
+        "analytics": "viralforge-analytics-hero.png",
+        "support": "viralforge-support-hero.png",
+        "ops_center": "viralforge-ops-center-hero.png",
+        "ready_to_post": "viralforge-ready-to-post-hero.png",
+    } == {
+        key: panel["asset"]
+        for key, panel in config["embeds"]["embeds"].items()
+        if panel.get("hero_asset")
+    }
+    assert config["tickets"]["hero_asset"] == "viralforge-ticket-hero.png"
+    assert (asset_root / config["tickets"]["hero_asset"]).is_file()
+    manifest = (asset_root / "ASSET_MANIFEST.md").read_text(encoding="utf-8")
+    for asset in {
+        panel["asset"]
+        for panel in config["embeds"]["embeds"].values()
+        if panel.get("hero_asset")
+    } | {config["tickets"]["hero_asset"]}:
+        assert f"`{asset}`" in manifest
 
 
 def test_discord_saas_polish_has_clean_categories_and_twenty_channels():
@@ -221,6 +243,16 @@ def test_discord_premium_role_and_forum_boundaries_are_configured():
     assert set(config["tickets"]["ticket_types"]) >= {"general", "bug_report", "feature_request"}
 
 
+def test_private_ticket_panel_uses_the_final_ticket_hero_banner():
+    config = load_config(Path("config/discord"))
+    ticket = DiscordTicket(ticket_type="workspace_setup")
+    embed = _private_ticket_embed(config, ticket)
+
+    assert embed.title == "Private Support"
+    assert embed.image.url == "attachment://viralforge-ticket-hero.png"
+    assert [field.name for field in embed.fields] == ["Issue", "Status", "Next Step"]
+
+
 def test_public_and_staff_audiences_have_strict_role_boundaries():
     assert audience_role_keys("public") == set()
     assert audience_role_keys("member") == {"member"}
@@ -254,5 +286,7 @@ def test_normal_workflow_statuses_are_human_readable():
     assert friendly_project_status("CLIPS_SUGGESTED") == "Ready for Review"
     assert friendly_project_status("RENDERED") == "Clips Ready"
     assert friendly_project_status("CONTENT_READY") == "Content Package Ready"
-    assert friendly_project_status("READY_TO_POST") == "Ready for Publishing Decision"
+    assert friendly_project_status("READY_TO_POST") == "Ready for Decision"
+    assert friendly_project_status("PENDING") == "Awaiting Review"
+    assert friendly_project_status("RUNNING") == "In Progress"
     assert friendly_project_status("FAILED") == "Needs Attention"
