@@ -1,5 +1,28 @@
 # Discord Visual QA Checklist
 
+## Read this before live QA
+
+The redesigned client journey is implemented locally. Its live verification is
+blocked until the invalid Discord bot credential is rotated/replaced and the
+deployed bot is restarted. The real guild was observed to contain legacy/demo
+clutter, so this checklist must be completed after the successful real-guild
+`/setup` run and owner-approved cleanup.
+
+Do not mark the server commercially complete until every applicable live item
+below is checked and the final result is recorded in
+`DISCORD_VISUAL_QA_REPORT.md`.
+
+## Required deployment and action checklist
+
+- [ ] Rotate or replace the Discord bot token.
+- [ ] Restart the deployed bot runtime and confirm a successful Discord login.
+- [ ] Run `/setup apply_changes: False` as guild owner.
+- [ ] Run `/setup apply_changes: True` as guild owner.
+- [ ] Review the `/setup` cleanup preview.
+- [ ] Run `/setup-reset apply_changes: False` if a deeper cleanup preview is needed.
+- [ ] Remove old demo/test clutter only after owner approval.
+- [ ] Complete this screenshot-based desktop and mobile QA pass.
+
 ## Client journey
 
 - [ ] No legacy/demo channel appears above `01 — START`.
@@ -29,6 +52,7 @@
 
 ## Cleanup check
 
-- [ ] Run `/setup` preview and review every reported legacy/demo candidate.
+- [ ] Review every `/setup` legacy/demo candidate with the guild owner.
 - [ ] Do not delete any candidate until ownership and ongoing use are confirmed.
-- [ ] Use `/setup-reset` preview before owner-confirmed cleanup.
+- [ ] Use `/setup-reset apply_changes: False` before owner-confirmed cleanup.
+- [ ] Capture before-and-after screenshots showing the legacy/demo clutter removed or hidden.
