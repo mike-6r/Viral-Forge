@@ -2,7 +2,8 @@ from pathlib import Path
 
 from sqlalchemy import inspect
 
-from app.discord_business.discord import LEGACY_MANAGED_CHANNEL_NAMES
+from app.discord_bot import friendly_project_status
+from app.discord_business.discord import LEGACY_MANAGED_CHANNEL_NAMES, _setup_summary
 from app.discord_business.models import DiscordGuildConfig
 from app.discord_business.service import (
     BusinessRepository,
@@ -102,7 +103,29 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
             hero_panels.add(key)
         assert len(panel.get("fields", [])) <= 4
         assert len(panel.get("actions", [])) <= 5
-    assert hero_panels == {"welcome"}
+    assert hero_panels == {
+        "welcome",
+        "choose_roles",
+        "product_overview",
+        "how_it_works",
+        "pricing",
+        "workspace_guide",
+        "review_and_publish",
+        "analytics",
+        "support",
+        "ops_center",
+    }
+    assert {
+        "viralforge-access.png",
+        "viralforge-overview.png",
+        "viralforge-workflow.png",
+        "viralforge-plans.png",
+        "viralforge-workspace.png",
+        "viralforge-review.png",
+        "viralforge-analytics.png",
+        "viralforge-support.png",
+        "viralforge-ops-center.png",
+    } <= {panel.get("asset") for panel in config["embeds"]["embeds"].values()}
 
 
 def test_discord_saas_polish_has_clean_categories_and_twenty_channels():
@@ -210,3 +233,26 @@ def test_public_and_staff_audiences_have_strict_role_boundaries():
         "support_team",
         "developer",
     }
+
+
+def test_setup_summary_lists_legacy_demo_candidates_without_deleting_them():
+    config = load_config(Path("config/discord"))
+    message = _setup_summary(
+        config,
+        changed=0,
+        panels=0,
+        legacy_actions=["delete legacy channel #test", "delete legacy channel #review"],
+        applied=False,
+    )
+    assert "#test" in message
+    assert "#review" in message
+    assert "nothing is removed" in message.lower()
+
+
+def test_normal_workflow_statuses_are_human_readable():
+    assert friendly_project_status("SOURCE_READY") == "Source Added"
+    assert friendly_project_status("CLIPS_SUGGESTED") == "Ready for Review"
+    assert friendly_project_status("RENDERED") == "Clips Ready"
+    assert friendly_project_status("CONTENT_READY") == "Content Package Ready"
+    assert friendly_project_status("READY_TO_POST") == "Ready for Publishing Decision"
+    assert friendly_project_status("FAILED") == "Needs Attention"

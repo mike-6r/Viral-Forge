@@ -31,6 +31,8 @@ embeds:
     title: Set Up Your Access
     description: "Choose your account type and the updates you want. Profile choices never grant operator authority."
     color: "#5B8CFF"
+    asset: viralforge-access.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Step 1, value: "Choose Creator, Brand, or Agency."}
@@ -53,6 +55,8 @@ embeds:
     title: One Clear Content Workflow
     description: "Keep source discovery, clip preparation, review, publishing decisions, and performance learning in one organized workspace."
     color: "#FF4F2E"
+    asset: viralforge-overview.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Source, value: "Add approved sources or manual video URLs."}
@@ -66,6 +70,8 @@ embeds:
     title: From Source Video to Approved Post
     description: "A review-first path from authorized material to a ready-to-post content package."
     color: "#5B8CFF"
+    asset: viralforge-workflow.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Discover + Analyze, value: "Find a source and identify strong moments with context."}
@@ -78,6 +84,8 @@ embeds:
     title: Choose the Right Operating Level
     description: "Access is reviewed privately so every workspace is configured for the right content operation."
     color: "#FF4F2E"
+    asset: viralforge-plans.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Creator, value: "One focused content brand."}
@@ -91,6 +99,8 @@ embeds:
     title: Keep Every Brand in Context
     description: "Sources, reviews, publishing rules, analytics, and team access stay organized by brand."
     color: "#5B8CFF"
+    asset: viralforge-workspace.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Sources, value: "Approved channels, videos, feeds, websites, and uploads."}
@@ -103,11 +113,13 @@ embeds:
     title: Approve What Matters Before Anything Goes Live
     description: "ViralForge prepares content. Operators make the final decisions."
     color: "#FF4F2E"
+    asset: viralforge-review.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Creative review, value: "Approve or reject clips and content packages."}
       - {name: Rights + context, value: "Review attribution, warnings, source acceptance, and publishing readiness."}
-      - {name: Publishing decision, value: "READY_TO_POST means ready for human action, not automatic upload."}
+      - {name: Publishing decision, value: "Ready for Publishing Decision means ready for human action, not automatic upload."}
     actions: [start_onboarding, how_it_works, open_support]
   analytics:
     channel: analytics
@@ -115,6 +127,8 @@ embeds:
     title: Learn What Performs
     description: "Turn official platform results and operator feedback into practical recommendations."
     color: "#5B8CFF"
+    asset: viralforge-analytics.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Signals, value: "Views, retention, engagement, follower growth, and other available metrics."}
@@ -140,6 +154,8 @@ embeds:
     title: Get Support
     description: "Open a private request for access, workspace setup, source issues, publishing questions, plans, bugs, or custom workflows."
     color: "#5B8CFF"
+    asset: viralforge-support.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Keep it secure, value: "Never paste credentials, passwords, private media, or source files in public channels."}
@@ -160,6 +176,8 @@ embeds:
     title: Operations Center
     description: "Monitor active brands, review work, ready-to-post items, support activity, and automation health."
     color: "#FF4F2E"
+    asset: viralforge-ops-center.png
+    hero_asset: true
     show_footer: true
     fields:
       - {name: Needs attention, value: "Start with failed jobs, blocked work, and escalated support."}

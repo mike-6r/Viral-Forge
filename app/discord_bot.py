@@ -1822,28 +1822,28 @@ VIRALFORGE_WARNING = 0xD99A2B
 VIRALFORGE_ERROR = 0xD94C4C
 
 FRIENDLY_PROJECT_STATUSES = {
-    "NEW": "Awaiting source",
-    "SOURCE_READY": "Source selected",
-    "SOURCE_REVIEW_REQUIRED": "Awaiting source",
-    "SOURCE_RESOLVED": "Source selected",
-    "SOURCE_ACCEPTED": "Source selected",
-    "DOWNLOADING": "Downloading video",
-    "DOWNLOADED": "Ready for analysis",
-    "ANALYZING": "Analyzing content",
-    "ANALYZED": "Opportunities found",
-    "CLIPS_SUGGESTED": "Review suggested clips",
-    "RENDERING": "Preparing clips",
-    "RENDERED": "Clips ready",
-    "CONTENT_READY": "Ready to post",
+    "NEW": "Source Added",
+    "SOURCE_READY": "Source Added",
+    "SOURCE_REVIEW_REQUIRED": "Ready for Review",
+    "SOURCE_RESOLVED": "Source Added",
+    "SOURCE_ACCEPTED": "Source Added",
+    "DOWNLOADING": "Preparing Video",
+    "DOWNLOADED": "Preparing Video",
+    "ANALYZING": "Preparing Video",
+    "ANALYZED": "Ready for Review",
+    "CLIPS_SUGGESTED": "Ready for Review",
+    "RENDERING": "Preparing Video",
+    "RENDERED": "Clips Ready",
+    "CONTENT_READY": "Content Package Ready",
     "PUBLISHED": "Published",
-    "FAILED": "Needs attention",
+    "FAILED": "Needs Attention",
     "REJECTED": "Rejected",
     "QUEUED": "Waiting to start",
     "RUNNING": "Processing",
     "COMPLETED": "Complete",
     "PENDING": "Needs review",
     "NOT_QUEUED": "Not scheduled",
-    "READY_TO_POST": "Ready to publish",
+    "READY_TO_POST": "Ready for Publishing Decision",
 }
 
 
@@ -2585,7 +2585,13 @@ def clip_quality_report_embed(report: ClipQualityReport) -> discord.Embed:
 def media_quality_embed(item: RenderedMediaInspection) -> discord.Embed:
     embed = discord.Embed(title="Rendered media quality")
     score = f"{item.overall_score:.0f}/100" if item.overall_score is not None else "Inspecting"
-    embed.description = f"Overall readiness: **{score}** · status: **{item.status.title()}**\nAdvisory only — it does not alter the clip, queue, or publishing."
+    inspection_status = {
+        "QUEUED": "Inspection queued",
+        "RUNNING": "Inspecting clip",
+        "COMPLETED": "Quality review complete",
+        "FAILED": "Needs attention",
+    }.get(item.status, "Inspection in progress")
+    embed.description = f"Overall readiness: **{score}** · {inspection_status}\nAdvisory only — it does not alter the clip, queue, or publishing."
     if item.status == "COMPLETED":
         embed.add_field(
             name="Technical / visual",
@@ -3256,7 +3262,12 @@ def content_package_embed(
     fields = package.fields_json
     label = platform_field.replace("_", " ").title()
     embed = discord.Embed(title="Post details")
-    embed.description = f"Status: **{package.status}** · confidence {package.confidence:.0%}"
+    package_status = {
+        "PENDING": "Content Package Review Needed",
+        "APPROVED": "Content Package Approved",
+        "REJECTED": "Content Package Needs Revision",
+    }.get(package.status, "Content Package Ready")
+    embed.description = f"{package_status} · confidence {package.confidence:.0%}"
     embed.add_field(
         name="Primary hook",
         value=str(fields.get("primary_hook", "Not generated"))[:1024],
@@ -4634,16 +4645,16 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         current_stage = "Needs attention"
         next_step = "Review the issue in Advanced Details, then retry or choose another video."
     elif status == "SOURCE_REVIEW_REQUIRED":
-        current_stage = "Awaiting source review"
+        current_stage = "Ready for Review"
         next_step = "Review the source to begin preparation."
     elif status == "DOWNLOADING":
         eyebrow = "PREPARING VIDEO"
         title = "Downloading source video"
         description = "ViralForge is securely preparing this video for analysis."
-        current_stage = "Downloading"
+        current_stage = "Preparing Video"
         next_step = "Refresh status to check analysis readiness."
     elif not project.source_storage_key:
-        current_stage = "Preparing source"
+        current_stage = "Preparing Video"
         next_step = "Wait for preparation to finish, or refresh for the latest status."
     elif state.analysis is None or state.analysis.status in {"QUEUED", "RUNNING"}:
         eyebrow = "ANALYSIS"
@@ -4652,25 +4663,25 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
             "ViralForge is reviewing the source for pacing, speech, scene changes, "
             "and moments that may work as short-form content."
         )
-        current_stage = "Analyzing video"
+        current_stage = "Preparing Video"
         next_step = "Suggested clips will appear when analysis finishes."
     elif not state.opportunity_count:
         eyebrow = "ANALYSIS"
         title = "Finding short-form opportunities"
         description = "ViralForge is preparing clip suggestions for your review."
-        current_stage = "Finding opportunities"
+        current_stage = "Preparing Video"
         next_step = "Suggested clips will appear when analysis finishes."
     elif state.pending_opportunity_count:
         eyebrow = "REVIEW"
         title = "Suggested clips are ready"
         description = "Review each suggested clip before rendering. Final approval stays with you."
-        current_stage = "Review suggested clips"
+        current_stage = "Ready for Review"
         next_step = "Open suggestions and choose which clips should move forward."
     elif state.approved_opportunity_count and not state.total_clips:
         eyebrow = "PREPARING CLIPS"
         title = "Preparing approved clips"
         description = "ViralForge is creating your approved clips for final review."
-        current_stage = "Preparing clips"
+        current_stage = "Preparing Video"
         next_step = "Refresh status to check when finished clips are ready."
     elif state.opportunity_count and not state.total_clips:
         eyebrow = "REVIEW"
@@ -4678,19 +4689,19 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         description = (
             "No clips were selected from this video. You can choose another video when ready."
         )
-        current_stage = "No clips selected"
+        current_stage = "Needs Attention"
         next_step = "Choose another video to continue."
     elif state.total_clips and state.approved < state.total_clips:
         eyebrow = "CLIPS READY"
         title = "Review finished clips"
         description = "Rendered clips are ready for final review before they become content-ready."
-        current_stage = "Review finished clips"
+        current_stage = "Clips Ready"
         next_step = "Approve the clips you want to prepare for posting."
     elif state.queued:
-        eyebrow = "READY TO POST"
+        eyebrow = "READY FOR PUBLISHING DECISION"
         title = "Content ready for approval"
         description = "Your post is ready. Review the final caption, destination, and schedule before publishing."
-        current_stage = "Ready to post"
+        current_stage = "Ready for Publishing Decision"
         next_step = "Review post details and make an explicit publishing decision."
 
     embed = discord.Embed(title=title, description=description, color=VIRALFORGE_CORAL)
@@ -4710,14 +4721,14 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         embed.add_field(name="Download", value=f"{percent}% complete", inline=True)
     else:
         milestones = [
-            ("Source selected", status != "SOURCE_REVIEW_REQUIRED"),
-            ("Preparing video", bool(project.source_storage_key)),
+            ("Source Added", status != "SOURCE_REVIEW_REQUIRED"),
+            ("Preparing Video", bool(project.source_storage_key)),
             (
-                "Analyze content",
+                "Ready for Review",
                 state.analysis is not None and state.analysis.status == "COMPLETED",
             ),
-            ("Review clips", state.total_clips > 0),
-            ("Publish", state.queued > 0),
+            ("Clips Ready", state.total_clips > 0),
+            ("Ready for Publishing Decision", state.queued > 0),
         ]
         progress = "\n".join(
             f"{'Complete' if complete else 'Pending'} — {label}" for label, complete in milestones

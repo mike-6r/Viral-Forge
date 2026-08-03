@@ -946,7 +946,7 @@ def _reset_summary(actions: list[str], changed: int, apply_changes: bool) -> str
 
 
 def _setup_summary(
-    config: dict[str, Any], *, changed: int, panels: int, legacy_detected: int, applied: bool
+    config: dict[str, Any], *, changed: int, panels: int, legacy_actions: list[str], applied: bool
 ) -> str:
     plan = plan_resources(config)
     roles = sum(item.resource_type == "role" for item in plan)
@@ -956,15 +956,27 @@ def _setup_summary(
         return (
             f"Preview ready for ViralForge Discord v{config['server']['version']}.\n"
             f"Roles: {roles} • Categories: {categories} • Channels: {channels}\n"
-            f"Legacy/demo items detected: {legacy_detected}\n"
-            "Nothing changed. Re-run with `apply_changes: True` to apply the managed layout."
+            + _cleanup_preview_text(legacy_actions)
+            + "Nothing changed. Re-run with `apply_changes: True` to apply the managed layout."
         )
     return (
         f"ViralForge Discord v{config['server']['version']} is applied.\n"
         f"Managed roles: {roles} • Categories: {categories} • Channels: {channels}\n"
         f"Resources created or refreshed: {changed} • official panels refreshed: {panels}\n"
-        f"Legacy/demo items detected: {legacy_detected} (preserved until `/setup-reset` is confirmed).\n"
-        "Next: review #welcome on mobile, then use /viralforge home for the active brand."
+        + _cleanup_preview_text(legacy_actions)
+        + "Next: review #welcome on mobile, then use /viralforge home for the active brand."
+    )
+
+
+def _cleanup_preview_text(actions: list[str]) -> str:
+    if not actions:
+        return "Cleanup preview: no managed legacy/demo resources detected.\n"
+    listed = "\n".join(f"• {action}" for action in actions[:8])
+    remainder = f"\n• and {len(actions) - 8} more" if len(actions) > 8 else ""
+    return (
+        f"Cleanup preview: {len(actions)} legacy/demo resource(s) detected and preserved.\n"
+        f"{listed}{remainder}\n"
+        "Recommendation: review `/setup-reset` with `apply_changes: False`; nothing is removed without a separate owner confirmation.\n"
     )
 
 
@@ -1180,7 +1192,7 @@ def register_business_commands(bot: Any) -> None:
                 load_config(),
                 changed=changed,
                 panels=panels,
-                legacy_detected=len(legacy_actions),
+                legacy_actions=legacy_actions,
                 applied=apply_changes,
             ),
             ephemeral=True,
@@ -1431,7 +1443,7 @@ def register_business_commands(bot: Any) -> None:
             load_config(),
             changed=changed,
             panels=panels,
-            legacy_detected=len(legacy_actions),
+            legacy_actions=legacy_actions,
             applied=apply_changes,
         )
         await interaction.followup.send(message, ephemeral=True)
