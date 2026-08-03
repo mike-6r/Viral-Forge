@@ -3101,27 +3101,27 @@ class ProducerRecommendationView(discord.ui.View):
 
 def opportunity_embed(state: OpportunityReviewState) -> discord.Embed:
     opportunity = state.opportunity
-    embed = discord.Embed(title=f"Suggested clip {state.position + 1} of {state.total}")
+    embed = discord.Embed(title=f"Clip suggestion {state.position + 1} of {state.total}")
     embed.description = (
         f"{opportunity.start_time:.1f}s–{opportunity.end_time:.1f}s "
         f"({opportunity.duration_seconds:.1f}s) · **{opportunity.overall_score:.1f}/100**"
     )
     embed.add_field(name="Confidence", value=f"{opportunity.confidence:.0%}", inline=True)
     embed.add_field(
-        name="Next step",
-        value="Use this clip to render it automatically, or skip it.",
+        name="Next best action",
+        value="Approve to prepare this clip for final review, or reject it and move on.",
         inline=True,
     )
     top_reasons = sorted(
         state.reasons, key=lambda reason: reason.score * reason.weight, reverse=True
     )[:3]
     embed.add_field(
-        name="Why ViralForge suggested it",
+        name="Why it is worth a look",
         value="\n".join(f"• {reason.reason_type}: {reason.score:.0%}" for reason in top_reasons)
         or "No scored reasons.",
         inline=False,
     )
-    embed.add_field(name="Why", value=opportunity.explanation[:1024], inline=False)
+    embed.add_field(name="Recommendation", value=opportunity.explanation[:1024], inline=False)
     embed.add_field(name="Transcript preview", value=state.transcript_preview[:1024], inline=False)
     return embed
 

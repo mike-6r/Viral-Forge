@@ -2,122 +2,126 @@ embeds:
   welcome:
     channel: start_here
     eyebrow: VIRALFORGE
-    title: Content operations for short-form brands
-    description: "Discover approved sources, prepare clips, review content, publish with control, and learn what performs."
+    title: ViralForge
+    description: "Content operations for short-form brands. Discover strong source videos, prepare clips, review before publishing, and learn from performance in one guided workspace."
     color: "#FF4D44"
     asset: welcome-command-center.png
+    hero_asset: true
+    show_icon: true
+    show_footer: true
     fields:
-      - {name: How it works, value: "Discover -> Clip -> Review -> Publish -> Track"}
-      - {name: Best for, value: "Creators, agencies, media companies, and businesses."}
-      - {name: Start here, value: "Choose a role, then begin onboarding when ready."}
-    actions: [choose_role, start_onboarding, view_platform, open_support]
+      - {name: For brands, value: "Keep sources, review decisions, publishing rules, and performance feedback organized."}
+      - {name: For operators, value: "Move approved content forward without losing the source context."}
+      - {name: Start here, value: "Accept the standards, set up access, then choose your first workspace goal."}
+    actions: [choose_role, how_it_works, view_pricing]
   standards:
     channel: start_here
     eyebrow: ACCESS + TRUST
     title: Community standards
-    description: "Protect private access, use approved sources, and keep feedback constructive."
+    description: "A short agreement that keeps access, customer work, and community feedback safe."
     color: "#FF4D44"
-    asset: platform-standards.png
     fields:
-      - {name: Private by default, value: "Never post credentials, customer files, or private media."}
-      - {name: Human controlled, value: "Access and publishing decisions remain reviewed."}
+      - {name: Keep it private, value: "Never post credentials, customer files, or private media in Discord."}
+      - {name: Keep it responsible, value: "Use approved sources and leave specific, respectful feedback."}
     actions: [accept_rules, terms, privacy]
   choose_roles:
     channel: choose_your_role
     eyebrow: ACCESS SETUP
-    title: Choose your ViralForge experience
-    description: "Select an account type and only the notifications you want. Workspace access is assigned after onboarding."
+    title: Set Up Your Access
+    description: "Choose how you use ViralForge so the workspace shows the right tools. This is a profile choice, not permission escalation."
     color: "#3BA3FF"
     fields:
-      - {name: Account type, value: "Creator, Agency, Media Company, Business, or Trial User."}
-      - {name: Workspace access, value: "Workspace Owner, Reviewer, Publisher, and Analytics Viewer are staff-assigned."}
-      - {name: Notifications, value: "Opt in only to updates that help you."}
+      - {name: Account type, value: "Creator, Brand, or Agency. Operator and Support access are assigned by staff only."}
+      - {name: Notifications, value: "Choose Product Updates, Workflow Alerts, Creator Tips, Case Studies, or Community Events."}
+      - {name: Next step, value: "Continue onboarding when your profile is saved, or open a private request for help."}
     actions: []
   product_overview:
     channel: product_overview
     eyebrow: PLATFORM
     title: One clear content workflow
-    description: "Keep source discovery, clip preparation, review, and performance learning in one organized workspace."
+    description: "A calm, review-first system for finding source material, preparing clips, and learning what performs."
     color: "#FF4D44"
-    asset: welcome-command-center.png
     fields:
-      - {name: Control, value: "Operators approve each important step."}
+      - {name: Control, value: "Important decisions stay human-approved."}
       - {name: Scale, value: "Run one brand or many without mixing context."}
     actions: [how_it_works, start_onboarding]
   how_it_works:
     channel: how_it_works
     eyebrow: WORKFLOW
-    title: Discover. Analyze. Create. Review. Publish. Track.
+    title: Discover. Clip. Review. Publish. Learn.
     description: "A review-first path from an approved source to a measured short-form post."
     color: "#3BA3FF"
-    asset: how-it-works.png
     fields:
-      - {name: Discover + analyze, value: "Surface approved source material and strong moments."}
-      - {name: Create + review, value: "Prepare clips and metadata, then make a human decision."}
-      - {name: Publish + track, value: "Use explicit approval and learn from available metrics."}
+      - {name: Discover, value: "Choose approved source material and identify promising moments."}
+      - {name: Review, value: "Check clips, source context, captions, and destination before anything goes live."}
+      - {name: Learn, value: "Use available performance signals to improve the next review."}
     actions: []
   pricing:
     channel: pricing_and_access
     eyebrow: PLANS
-    title: Access that fits the operation
-    description: "Discord does not collect billing information. Access is reviewed and provisioned by the ViralForge team."
+    title: Plans for the way you operate
+    description: "Choose the level of workspace support that fits your content operation. Access and billing are handled privately."
     color: "#FF4D44"
-    asset: pricing-access.png
     fields:
-      - {name: Creator, value: "Focused content operation."}
-      - {name: Professional + Agency, value: "Team review and multi-brand workflows."}
-      - {name: Enterprise, value: "Custom operating requirements."}
+      - {name: Creator, value: "Best for: one focused content brand. Includes: a guided workspace and review flow. Next: request access."}
+      - {name: Professional, value: "Best for: teams with more review volume. Includes: team workflows and broader operating controls. Next: talk to us."}
+      - {name: Agency, value: "Best for: multiple brands or client workspaces. Includes: multi-brand coordination. Next: talk to us."}
+      - {name: Enterprise, value: "Best for: custom workflows and dedicated support. Includes: tailored operating requirements. Next: open a private request."}
     actions: [request_access, talk_to_sales]
   workspace_guide:
     channel: workspace_guide
     eyebrow: WORKSPACES
     title: Keep every brand in context
-    description: "Each workspace holds its sources, rules, review queue, publishing settings, analytics, and permissions."
+    description: "Each brand gets its own workspace so sources, review decisions, publishing rules, analytics, and team access stay clean."
     color: "#3BA3FF"
-    asset: workspace-guide.png
     fields:
-      - {name: Separate by design, value: "Brand context and access remain isolated."}
-      - {name: Start small, value: "Begin with one approved source and one review path."}
+      - {name: Sources, value: "Keep approved source identities and source quality in the right brand context."}
+      - {name: Review + rules, value: "Keep clip decisions and publishing controls clear for each workspace."}
+      - {name: Analytics + team access, value: "Learn from performance without mixing team access or results."}
     actions: [start_onboarding]
   review_queue:
     channel: review_queue
     eyebrow: REVIEW + PUBLISH
-    title: Prepare, approve, then publish
-    description: "Clips move through caption and metadata preparation, review, approval, scheduling, and explicit publishing."
+    title: Review before anything goes live
+    description: "ViralForge prepares the work; a person decides what moves forward."
     color: "#FF4D44"
-    asset: review-queue.png
     fields:
-      - {name: Before approval, value: "Check source context, rights, copy, framing, and destination."}
-      - {name: No silent publishing, value: "A human chooses every publish or schedule action."}
-    actions: [open_support]
+      - {name: Review clips, value: "Check the moment, context, framing, and source acceptance."}
+      - {name: Check post details, value: "Review caption, metadata, rights, moderation, and the destination account."}
+      - {name: Approve or reject, value: "Choose what proceeds. Publishing and scheduling always require an explicit human decision."}
+    actions: [start_onboarding, open_support]
   analytics:
     channel: analytics
     eyebrow: FEEDBACK LOOP
     title: Learn from what performs
-    description: "Use available platform metrics to understand hooks, topics, formats, and posting patterns."
+    description: "ViralForge turns publishing results into practical feedback for future clips."
     color: "#3BA3FF"
     fields:
-      - {name: Signals, value: "Views, watch time, retention, and engagement when available."}
-      - {name: Recommendations, value: "Performance informs review; it never changes settings silently."}
-    actions: []
+      - {name: Signals, value: "Views, retention, engagement, follower growth, and other metrics only when the platform provides them."}
+      - {name: Learnings, value: "Compare hooks, pacing, captions, topics, source quality, and posting time."}
+      - {name: Decisions, value: "Recommendations inform your next review; settings never change silently."}
+    actions: [start_onboarding]
   onboarding:
     channel: onboarding
     eyebrow: ONBOARDING
     title: Configure your first workspace
-    description: "Choose your path, verify access with the team, add approved sources, and set brand review rules."
+    description: "Follow the checklist once, then use the workspace with a clear review-first routine."
     color: "#FF4D44"
     fields:
-      - {name: First step, value: "Select your account type and goal."}
-      - {name: Next, value: "Support verifies workspace access when needed."}
-    actions: [start_onboarding]
+      - {name: 1. Set up access, value: "Choose your account type and notifications."}
+      - {name: 2. Confirm your workspace, value: "Tell us the brand or team context you need."}
+      - {name: 3. Add approved sources, value: "Start with sources you are permitted to process."}
+      - {name: 4. Review your first post, value: "Approve the first clip and post details before any publish decision."}
+    actions: [start_onboarding, open_support]
   support:
     channel: support
     eyebrow: SUPPORT
-    title: Open a private request
-    description: "Get help with workspace setup, sources, publishing, account access, plans, bugs, or custom workflows."
+    title: Get Support
+    description: "Open a private request for workspace access, sources, publishing, plans, bugs, or custom workflows."
     color: "#3BA3FF"
     fields:
-      - {name: Keep it safe, value: "Do not paste credentials or private source media in Discord."}
+      - {name: Choose a topic, value: "Account / Access, Workspace Setup, Source or Video Issue, Publishing Issue, Billing / Plan, Bug Report, or Custom Workflow."}
+      - {name: Keep it safe, value: "Never paste passwords, credentials, or private media in a public channel."}
     actions: [open_support]
   feature_requests:
     channel: feature_requests
@@ -131,12 +135,12 @@ embeds:
   team_dashboard:
     channel: team_dashboard
     eyebrow: OPERATIONS
-    title: Team dashboard
-    description: "A compact staff overview for what needs attention now."
+    title: Operations Center
+    description: "Monitor active brands, review queues, content readiness, publishing issues, and support activity."
     color: "#FF4D44"
     fields:
-      - {name: Requests, value: "Tickets and onboarding."}
-      - {name: Content pipeline, value: "Reviews and holds."}
-      - {name: Customer activity, value: "Access and workspace movement."}
-      - {name: System attention, value: "Alerts and failed jobs."}
+      - {name: Needs attention, value: "Start with failed jobs, holds, and escalated support requests."}
+      - {name: Active workspaces, value: "Check brands with current source, review, or publishing activity."}
+      - {name: Review + publishing, value: "Open customer review for clips and ticket logs for support activity."}
+      - {name: Next action, value: "Choose one queue below; diagnostics remain in staff-only tools."}
     actions: [view_tickets, review_customers, refresh, open_logs]

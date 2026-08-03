@@ -1,4 +1,4 @@
-account_types: [creator, agency, media_company, business, trial_user]
+account_types: [creator, media_company, agency, trial_user]
 primary_goals: [discover_sources, review_clips, organize_workflows, publish_approved_content, learn_more]
 member_role: member
 waitlist_role: trial_user

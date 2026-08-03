@@ -13,7 +13,7 @@ palette:
   info: "#5B8CFF"
 asset_directory: assets/discord/viralforge
 icon_asset: vf-icon.png
-footer: "ViralForge | Content Operations Platform"
+footer: "ViralForge"
 voice: "Modern, calm, trustworthy, concise, and human-approved."
 presence:
   rotation_seconds: 45

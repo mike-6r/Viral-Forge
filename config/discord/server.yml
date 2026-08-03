@@ -1,4 +1,4 @@
-version: "2.2"
+version: "2.3"
 name: ViralForge
 description: "The operating system for short-form content brands."
 community_values:
@@ -6,7 +6,7 @@ community_values:
   - Use only approved, authorized, or publicly available sources.
   - Keep feedback specific, respectful, and useful.
 categories:
-  - {key: start_here, name: "01 - START HERE", audience: public}
+  - {key: start_here, name: "01 - START", audience: public}
   - {key: platform, name: "02 - PLATFORM", audience: member}
   - {key: workspaces, name: "03 - WORKSPACES", audience: member}
   - {key: customers, name: "04 - CUSTOMERS", audience: member}

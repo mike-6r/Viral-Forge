@@ -10,8 +10,7 @@ roles:
   - {key: customer, name: Customer, color: "#D5A27C", audience: customer, managed: false}
   - {key: creator, name: Creator, color: "#9D8B80", audience: member, managed: false}
   - {key: agency, name: Agency, color: "#B9835C", audience: member, managed: false}
-  - {key: media_company, name: Media Company, color: "#8C7B70", audience: member, managed: false}
-  - {key: business, name: Business, color: "#A37A60", audience: member, managed: false}
+  - {key: media_company, name: Brand, color: "#8C7B70", audience: member, managed: false}
   - {key: trial_user, name: Trial User, color: "#6E7078", audience: member, managed: false}
   - {key: workspace_owner, name: Workspace Owner, color: "#E08A48", audience: customer, managed: false}
   - {key: reviewer, name: Reviewer, color: "#9B7C68", audience: customer, managed: false}
@@ -19,6 +18,7 @@ roles:
   - {key: analytics_viewer, name: Analytics Viewer, color: "#777F8B", audience: customer, managed: false}
   - {key: product_updates, name: Product Updates, color: "#7B8594", audience: notification, managed: false}
   - {key: processing_alerts, name: Processing Alerts, color: "#A3765B", audience: notification, managed: false}
-  - {key: feature_releases, name: Feature Releases, color: "#8B7799", audience: notification, managed: false}
+  - {key: feature_releases, name: Creator Tips, color: "#8B7799", audience: notification, managed: false}
+  - {key: case_studies, name: Case Studies, color: "#8B7799", audience: notification, managed: false}
   - {key: community_events, name: Community Events, color: "#6F8387", audience: notification, managed: false}
   - {key: member, name: Member, color: "#6D737D", audience: member, managed: false}

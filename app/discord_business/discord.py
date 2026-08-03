@@ -65,20 +65,20 @@ def can_manage_member(actor: discord.Member, target: discord.Member) -> bool:
     return actor.guild.owner_id == actor.id or actor.top_role > target.top_role
 
 ACTION_LABELS = {
-    "view_platform": "View Platform",
-    "choose_role": "Choose Role",
+    "view_platform": "Platform Overview",
+    "choose_role": "Set Up Access",
     "start_onboarding": "Start Onboarding",
-    "open_support": "Open Support",
+    "open_support": "Open Ticket",
     "how_it_works": "How It Works",
-    "view_pricing": "View Pricing",
+    "view_pricing": "View Plans",
     "request_access": "Request Access",
     "talk_to_sales": "Talk to Sales",
-    "view_publishing_flow": "View Publishing Flow",
-    "view_tickets": "View Tickets",
-    "review_customers": "Review Customers",
+    "view_publishing_flow": "Review Workflow",
+    "view_tickets": "Open Tickets",
+    "review_customers": "View Reviews",
     "refresh": "Refresh",
-    "open_logs": "Open Logs",
-    "submit_feature": "Submit Feature Request",
+    "open_logs": "Ticket Activity",
+    "submit_feature": "Submit Request",
 }
 
 # Names used by the first ViralForge community configuration. These are considered
@@ -87,7 +87,6 @@ LEGACY_MANAGED_CHANNEL_NAMES = frozenset(
     {
         "rules",
         "changelog",
-        "welcome",
         "feature-overview",
         "platform-status",
         "introductions",
@@ -130,6 +129,10 @@ LEGACY_MANAGED_CHANNEL_NAMES = frozenset(
         "publishing-queue",
         "errors",
         "audit-log",
+        "youtube-stuff",
+        "youtube stuff",
+        "test",
+        "review",
     }
 )
 
@@ -156,12 +159,13 @@ def _public_embed(config: dict[str, Any], key: str) -> discord.Embed:
     for field in item.get("fields", [])[:4]:
         embed.add_field(name=field["name"], value=field["value"], inline=False)
     branding = config["branding"]
-    embed.set_footer(text=branding["footer"])
+    if item.get("show_footer"):
+        embed.set_footer(text=branding["footer"])
     icon_name = branding.get("icon_asset")
-    if icon_name and (Path(branding["asset_directory"]) / icon_name).is_file():
+    if item.get("show_icon") and icon_name and (Path(branding["asset_directory"]) / icon_name).is_file():
         embed.set_thumbnail(url=f"attachment://{icon_name}")
     asset = item.get("asset")
-    if asset and (Path(branding["asset_directory"]) / asset).is_file():
+    if item.get("hero_asset") and asset and (Path(branding["asset_directory"]) / asset).is_file():
         embed.set_image(url=f"attachment://{asset}")
     return embed
 
@@ -169,7 +173,10 @@ def _public_embed(config: dict[str, Any], key: str) -> discord.Embed:
 def _embed_files(config: dict[str, Any], key: str) -> list[discord.File]:
     item, branding = config["embeds"]["embeds"][key], config["branding"]
     root = Path(branding["asset_directory"])
-    names = [branding.get("icon_asset"), item.get("asset")]
+    names = [
+        branding.get("icon_asset") if item.get("show_icon") else None,
+        item.get("asset") if item.get("hero_asset") else None,
+    ]
     return [discord.File(root / name, filename=name) for name in dict.fromkeys(names) if name and (root / name).is_file()]
 
 
@@ -581,7 +588,14 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
                 ephemeral=True,
             )
             return
-        if self.action in {"open_support", "request_access", "talk_to_sales"}:
+        if self.action == "open_support":
+            await interaction.response.send_message(
+                "**Get Support**\nChoose a topic to open one private request. Do not share credentials or private media.",
+                view=SupportTopicView(config),
+                ephemeral=True,
+            )
+            return
+        if self.action in {"request_access", "talk_to_sales"}:
             await _open_ticket(interaction, "general", "normal")
             return
         if self.action == "submit_feature":
@@ -616,6 +630,41 @@ class PanelActionView(discord.ui.View):
         for action in actions[:5]:
             if action != "accept_rules":
                 self.add_item(PanelActionButton(panel_key, action))
+
+
+class SupportTopicSelect(discord.ui.Select["SupportTopicView"]):
+    """A lightweight topic picker before a private ticket is created."""
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        labels = {
+            "account_access": "Account / Access",
+            "workspace_setup": "Workspace Setup",
+            "source_setup": "Source or Video Issue",
+            "publishing_issue": "Publishing Issue",
+            "billing": "Billing / Plan",
+            "bug_report": "Bug Report",
+            "custom_workflow": "Custom Workflow",
+        }
+        configured = set(config["tickets"]["ticket_types"])
+        options = [
+            discord.SelectOption(label=label, value=key)
+            for key, label in labels.items()
+            if key in configured
+        ]
+        super().__init__(
+            placeholder="What do you need help with?",
+            options=options,
+            custom_id="viralforge:business:support-topic",
+        )
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        await _open_ticket(interaction, self.values[0], "normal")
+
+
+class SupportTopicView(discord.ui.View):
+    def __init__(self, config: dict[str, Any]) -> None:
+        super().__init__(timeout=300)
+        self.add_item(SupportTopicSelect(config))
 
 
 class OnboardingSelect(discord.ui.Select["OnboardingView"]):
@@ -931,7 +980,7 @@ class SelfRoleSelect(discord.ui.Select["SelfRoleView"]):
         self.role_keys = role_keys
         names = {item["key"]: item["name"] for item in config["roles"]["roles"]}
         super().__init__(
-            placeholder="Choose notification and interest roles",
+            placeholder="Choose notifications (optional)",
             min_values=0,
             max_values=min(len(role_keys), int(config["role_panels"]["max_self_role_selections"])),
             options=[discord.SelectOption(label=names[key], value=key) for key in role_keys],
@@ -1201,7 +1250,7 @@ def register_business_commands(bot: Any) -> None:
     @account.command(name="get-started", description="Choose your ViralForge onboarding path")
     async def get_started(interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
-            embed=_public_embed(load_config(), "start_here"),
+            embed=_public_embed(load_config(), "welcome"),
             view=OnboardingView(load_config()),
             ephemeral=True,
         )

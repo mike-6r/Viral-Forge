@@ -87,12 +87,16 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
         "team_dashboard",
         "feature_requests",
     }
-    for panel in config["embeds"]["embeds"].values():
+    hero_panels = set()
+    for key, panel in config["embeds"]["embeds"].items():
         assert panel["channel"] in resource_keys
         if panel.get("asset"):
             assert (asset_root / panel["asset"]).is_file()
+        if panel.get("hero_asset"):
+            hero_panels.add(key)
         assert len(panel.get("fields", [])) <= 4
         assert len(panel.get("actions", [])) <= 5
+    assert hero_panels == {"welcome"}
 
 
 def test_discord_saas_polish_has_exactly_seven_categories_and_nineteen_channels():
@@ -109,8 +113,8 @@ def test_discord_saas_polish_has_exactly_seven_categories_and_nineteen_channels(
         "private_requests",
     ]
     assert [item["name"] for item in config["channels"]["channels"]] == [
-        "start-here",
-        "choose-your-role",
+        "welcome",
+        "access",
         "announcements",
         "overview",
         "how-it-works",
@@ -124,7 +128,7 @@ def test_discord_saas_polish_has_exactly_seven_categories_and_nineteen_channels(
         "general",
         "creator-talk",
         "wins",
-        "team-dashboard",
+        "ops-center",
         "customer-review",
         "operator-alerts",
         "ticket-logs",
@@ -166,13 +170,13 @@ def test_discord_premium_role_and_forum_boundaries_are_configured():
         "product_updates",
         "processing_alerts",
         "feature_releases",
+        "case_studies",
         "community_events",
     }
     assert set(config["role_panels"]["account_type_role_keys"]) == {
         "creator",
         "agency",
         "media_company",
-        "business",
         "trial_user",
     }
     assert not set(config["role_panels"]["account_type_role_keys"]) & {
