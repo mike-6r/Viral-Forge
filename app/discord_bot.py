@@ -22,6 +22,7 @@ from app.analysis.models import AnalysisEvent, AnalysisSegment, TranscriptSegmen
 from app.analysis.service import request_analysis
 from app.analytics.service import dashboard as analytics_dashboard
 from app.audit.models import AuditEvent
+from app.autopilot.service import automation_summary
 from app.brands.models import Brand, BrandMembership
 from app.brands.service import ensure_legacy_brand, set_default_brand
 from app.common.config import Settings, get_settings
@@ -818,9 +819,7 @@ class ProductionRepository:
                 raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
             decided = decide_clip(session, self._actor(session), clip, approved)
             if approved:
-                package = request_content_package_generation(
-                    session, self._actor(session), decided
-                )
+                package = request_content_package_generation(session, self._actor(session), decided)
                 if package.status == ContentPackageStatus.QUEUED:
                     from app.worker import generate_content_package
 
@@ -870,7 +869,9 @@ class ProductionRepository:
             return session.scalar(
                 select(ContentPackage)
                 .where(ContentPackage.project_id == project_id)
-                .order_by(ContentPackage.created_at.desc(), ContentPackage.generation_version.desc())
+                .order_by(
+                    ContentPackage.created_at.desc(), ContentPackage.generation_version.desc()
+                )
             )
         finally:
             session.close()
@@ -896,7 +897,9 @@ class ProductionRepository:
         finally:
             session.close()
 
-    def pending_producer_recommendations(self, project_id: uuid.UUID) -> list[ProducerRecommendation]:
+    def pending_producer_recommendations(
+        self, project_id: uuid.UUID
+    ) -> list[ProducerRecommendation]:
         session = next(self._session())
         try:
             return list(
@@ -919,8 +922,12 @@ class ProductionRepository:
         try:
             item = session.get(ProducerRecommendation, recommendation_id)
             if item is None:
-                raise ProductionError("PRODUCER_RECOMMENDATION_NOT_FOUND", "recommendation no longer exists")
-            return decide_recommendation(session, self._actor(session), item, expected_version, approved)
+                raise ProductionError(
+                    "PRODUCER_RECOMMENDATION_NOT_FOUND", "recommendation no longer exists"
+                )
+            return decide_recommendation(
+                session, self._actor(session), item, expected_version, approved
+            )
         finally:
             session.close()
 
@@ -931,7 +938,9 @@ class ProductionRepository:
         try:
             item = session.get(ProducerRecommendation, recommendation_id)
             if item is None:
-                raise ProductionError("PRODUCER_RECOMMENDATION_NOT_FOUND", "recommendation no longer exists")
+                raise ProductionError(
+                    "PRODUCER_RECOMMENDATION_NOT_FOUND", "recommendation no longer exists"
+                )
             return edit_recommendation(
                 session, self._actor(session), item, expected_version, {"operator_note": note}
             )
@@ -954,7 +963,14 @@ class ProductionRepository:
             clip = session.get(ProductionClip, clip_id)
             if clip is None:
                 raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
-            return request_inspection(session, self._actor(session), clip, self._storage(), rerun=rerun, settings=self.settings)
+            return request_inspection(
+                session,
+                self._actor(session),
+                clip,
+                self._storage(),
+                rerun=rerun,
+                settings=self.settings,
+            )
         finally:
             session.close()
 
@@ -964,7 +980,9 @@ class ProductionRepository:
         try:
             item = session.get(RenderedMediaInspection, inspection_id)
             if item is None:
-                raise ProductionError("RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists")
+                raise ProductionError(
+                    "RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists"
+                )
             return item
         finally:
             session.close()
@@ -972,27 +990,48 @@ class ProductionRepository:
     def rendered_media_issues(self, inspection_id: uuid.UUID) -> list[RenderedMediaInspectionIssue]:
         session = next(self._session())
         try:
-            return list(session.scalars(select(RenderedMediaInspectionIssue).where(RenderedMediaInspectionIssue.inspection_id == inspection_id).order_by(RenderedMediaInspectionIssue.start_seconds, RenderedMediaInspectionIssue.created_at)))
+            return list(
+                session.scalars(
+                    select(RenderedMediaInspectionIssue)
+                    .where(RenderedMediaInspectionIssue.inspection_id == inspection_id)
+                    .order_by(
+                        RenderedMediaInspectionIssue.start_seconds,
+                        RenderedMediaInspectionIssue.created_at,
+                    )
+                )
+            )
         finally:
             session.close()
 
-    def decide_media_quality(self, inspection_id: uuid.UUID, expected_version: int, approved: bool) -> RenderedMediaInspection:
+    def decide_media_quality(
+        self, inspection_id: uuid.UUID, expected_version: int, approved: bool
+    ) -> RenderedMediaInspection:
         session = next(self._session())
         try:
             item = session.get(RenderedMediaInspection, inspection_id)
             if item is None:
-                raise ProductionError("RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists")
-            return review_inspection(session, self._actor(session), item, expected_version, approved)
+                raise ProductionError(
+                    "RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists"
+                )
+            return review_inspection(
+                session, self._actor(session), item, expected_version, approved
+            )
         finally:
             session.close()
 
-    def note_media_quality(self, inspection_id: uuid.UUID, expected_version: int, note: str) -> RenderedMediaInspection:
+    def note_media_quality(
+        self, inspection_id: uuid.UUID, expected_version: int, note: str
+    ) -> RenderedMediaInspection:
         session = next(self._session())
         try:
             item = session.get(RenderedMediaInspection, inspection_id)
             if item is None:
-                raise ProductionError("RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists")
-            return add_rendered_media_note(session, self._actor(session), item, expected_version, note)
+                raise ProductionError(
+                    "RENDERED_MEDIA_INSPECTION_NOT_FOUND", "media-quality report no longer exists"
+                )
+            return add_rendered_media_note(
+                session, self._actor(session), item, expected_version, note
+            )
         finally:
             session.close()
 
@@ -1013,29 +1052,39 @@ class ProductionRepository:
         try:
             plan = session.get(ClipCorrectionPlan, plan_id)
             if plan is None:
-                raise ProductionError("CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists")
+                raise ProductionError(
+                    "CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists"
+                )
             return correction_actions(session, plan)
         finally:
             session.close()
 
-    def submit_correction_plan(self, plan_id: uuid.UUID, expected_version: int) -> ClipCorrectionPlan:
+    def submit_correction_plan(
+        self, plan_id: uuid.UUID, expected_version: int
+    ) -> ClipCorrectionPlan:
         session = next(self._session())
         try:
             plan = session.get(ClipCorrectionPlan, plan_id)
             if plan is None:
-                raise ProductionError("CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists")
+                raise ProductionError(
+                    "CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists"
+                )
             return submit_correction_plan(session, self._actor(session), plan, expected_version)
         except CorrectionError as error:
             raise ProductionError(error.code, str(error)) from error
         finally:
             session.close()
 
-    def confirm_correction_plan(self, plan_id: uuid.UUID, expected_version: int) -> ClipCorrectionPlan:
+    def confirm_correction_plan(
+        self, plan_id: uuid.UUID, expected_version: int
+    ) -> ClipCorrectionPlan:
         session = next(self._session())
         try:
             plan = session.get(ClipCorrectionPlan, plan_id)
             if plan is None:
-                raise ProductionError("CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists")
+                raise ProductionError(
+                    "CORRECTION_PLAN_NOT_FOUND", "correction plan no longer exists"
+                )
             return confirm_correction_plan(session, self._actor(session), plan, expected_version)
         except CorrectionError as error:
             raise ProductionError(error.code, str(error)) from error
@@ -1244,6 +1293,7 @@ class ProductionRepository:
                 "evening": operations_evening_report(session, brand.id),
                 "health": operations_health_summary(session, brand.id),
                 "queue": operations_queue_metrics(session, brand.id),
+                "autopilot": automation_summary(session, brand.id),
                 "tasks": list(
                     session.scalars(
                         select(OperatorTask)
@@ -1255,7 +1305,9 @@ class ProductionRepository:
                 "alerts": list(
                     session.scalars(
                         select(OperationsAlert)
-                        .where(OperationsAlert.brand_id == brand.id, OperationsAlert.status == "OPEN")
+                        .where(
+                            OperationsAlert.brand_id == brand.id, OperationsAlert.status == "OPEN"
+                        )
                         .order_by(OperationsAlert.last_seen_at.desc())
                         .limit(5)
                     )
@@ -1718,7 +1770,11 @@ def operational_status_embed(status: dict[str, bool]) -> discord.Embed:
     ready = sum(status.values())
     embed = discord.Embed(
         title="Operations health",
-        description=("Core services are ready." if ready == len(status) else "One or more services need attention."),
+        description=(
+            "Core services are ready."
+            if ready == len(status)
+            else "One or more services need attention."
+        ),
         color=VIRALFORGE_SUCCESS if ready == len(status) else VIRALFORGE_WARNING,
     )
     embed.set_author(name="OPERATIONS")
@@ -1757,7 +1813,11 @@ def lifecycle_next_action(state: DashboardState) -> str:
 
 def dashboard_embed(state: DashboardState) -> discord.Embed:
     project = state.project
-    embed = discord.Embed(title="Technical workflow details", description="Diagnostics for staff review. These details do not change the active workflow.", color=VIRALFORGE_CORAL)
+    embed = discord.Embed(
+        title="Technical workflow details",
+        description="Diagnostics for staff review. These details do not change the active workflow.",
+        color=VIRALFORGE_CORAL,
+    )
     embed.set_author(name="ADVANCED DETAILS")
     embed.add_field(name="Status", value=project.status, inline=True)
     embed.add_field(name="Source", value=project.source_url, inline=False)
@@ -1869,7 +1929,9 @@ class ProjectDashboardView(discord.ui.View):
         self.project_id, self.repository, self.settings = project_id, repository, settings
         for item in self.children:
             if isinstance(item, discord.ui.Button):
-                item.custom_id = f"viralforge:guided:{project_id}:{(item.label or '').lower().replace(' ', '-')}"
+                item.custom_id = (
+                    f"viralforge:guided:{project_id}:{(item.label or '').lower().replace(' ', '-')}"
+                )
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 item.custom_id = f"viralforge:project:{project_id}:{(item.label or '').lower().replace(' ', '-')}"
@@ -2419,7 +2481,10 @@ def clip_quality_report_embed(report: ClipQualityReport) -> discord.Embed:
     embed.add_field(name="Context", value=f"{report.context_quality:.0f}/100")
     embed.add_field(name="Subtitles", value=f"{report.subtitle_quality:.0f}/100")
     embed.add_field(name="Title", value=f"{report.title_quality:.0f}/100")
-    embed.add_field(name="Caption / hashtags", value=f"{report.caption_quality:.0f} / {report.hashtag_quality:.0f}")
+    embed.add_field(
+        name="Caption / hashtags",
+        value=f"{report.caption_quality:.0f} / {report.hashtag_quality:.0f}",
+    )
     embed.add_field(name="Why", value=report.reasoning[:1024], inline=False)
     return embed
 
@@ -2429,21 +2494,37 @@ def media_quality_embed(item: RenderedMediaInspection) -> discord.Embed:
     score = f"{item.overall_score:.0f}/100" if item.overall_score is not None else "Inspecting"
     embed.description = f"Overall readiness: **{score}** · status: **{item.status.title()}**\nAdvisory only — it does not alter the clip, queue, or publishing."
     if item.status == "COMPLETED":
-        embed.add_field(name="Technical / visual", value=f"{item.technical_score or 0:.0f} / {item.visual_score or 0:.0f}")
-        embed.add_field(name="Audio / hook", value=f"{item.audio_score or 0:.0f} / {item.hook_score or 0:.0f}")
-        embed.add_field(name="Subtitles / safe area", value=f"{item.subtitle_score or 0:.0f} / {item.safe_area_score or 0:.0f}")
-    embed.add_field(name="Summary", value=(item.summary or "Inspection is queued.")[:800], inline=False)
+        embed.add_field(
+            name="Technical / visual",
+            value=f"{item.technical_score or 0:.0f} / {item.visual_score or 0:.0f}",
+        )
+        embed.add_field(
+            name="Audio / hook", value=f"{item.audio_score or 0:.0f} / {item.hook_score or 0:.0f}"
+        )
+        embed.add_field(
+            name="Subtitles / safe area",
+            value=f"{item.subtitle_score or 0:.0f} / {item.safe_area_score or 0:.0f}",
+        )
+    embed.add_field(
+        name="Summary", value=(item.summary or "Inspection is queued.")[:800], inline=False
+    )
     if item.warnings_json:
         embed.add_field(name="Warnings", value=" · ".join(item.warnings_json)[:600], inline=False)
-    embed.set_footer(text=f"Inspection version {item.inspection_version} · {item.safe_area_profile.replace('_', ' ')}")
+    embed.set_footer(
+        text=f"Inspection version {item.inspection_version} · {item.safe_area_profile.replace('_', ' ')}"
+    )
     return embed
 
 
-def media_quality_issue_embed(issue: RenderedMediaInspectionIssue, position: int, total: int) -> discord.Embed:
+def media_quality_issue_embed(
+    issue: RenderedMediaInspectionIssue, position: int, total: int
+) -> discord.Embed:
     embed = discord.Embed(title=f"Media quality issue {position + 1} of {total}")
     timeline = "Not tied to one sampled moment"
     if issue.start_seconds is not None:
-        timeline = f"{issue.start_seconds:.1f}s" + (f"–{issue.end_seconds:.1f}s" if issue.end_seconds is not None else "")
+        timeline = f"{issue.start_seconds:.1f}s" + (
+            f"–{issue.end_seconds:.1f}s" if issue.end_seconds is not None else ""
+        )
     embed.add_field(name="Severity", value=issue.severity)
     embed.add_field(name="Timeline", value=timeline)
     embed.add_field(name="What was measured", value=issue.explanation[:750], inline=False)
@@ -2452,14 +2533,19 @@ def media_quality_issue_embed(issue: RenderedMediaInspectionIssue, position: int
     return embed
 
 
-def correction_plan_embed(plan: ClipCorrectionPlan, rows: list[ClipCorrectionAction]) -> discord.Embed:
+def correction_plan_embed(
+    plan: ClipCorrectionPlan, rows: list[ClipCorrectionAction]
+) -> discord.Embed:
     embed = discord.Embed(title="Correction plan preview")
     selected = [row for row in rows if row.operator_selected]
     embed.description = (
         "Review the selected bounded changes. Submitting only prepares confirmation; "
         "it does not render."
     )
-    changes = "\n".join(f"• {row.action_type.replace('_', ' ').title()}" for row in selected) or "• Manual review required"
+    changes = (
+        "\n".join(f"• {row.action_type.replace('_', ' ').title()}" for row in selected)
+        or "• Manual review required"
+    )
     embed.add_field(name="Selected corrections", value=changes[:900], inline=False)
     embed.add_field(name="Status", value=plan.status.replace("_", " ").title())
     embed.add_field(name="Confidence", value=f"{plan.confidence:.0%}")
@@ -2468,7 +2554,9 @@ def correction_plan_embed(plan: ClipCorrectionPlan, rows: list[ClipCorrectionAct
 
 
 class MediaQualityNoteModal(discord.ui.Modal, title="Add media-quality note"):
-    note: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(label="Operator note", max_length=1_000, style=discord.TextStyle.paragraph)
+    note: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
+        label="Operator note", max_length=1_000, style=discord.TextStyle.paragraph
+    )
 
     def __init__(self, item: RenderedMediaInspection, repository: ProductionRepository) -> None:
         super().__init__()
@@ -2477,11 +2565,19 @@ class MediaQualityNoteModal(discord.ui.Modal, title="Add media-quality note"):
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         try:
-            updated = await asyncio.to_thread(self.repository.note_media_quality, self.item.id, self.item.review_version, str(self.note))
+            updated = await asyncio.to_thread(
+                self.repository.note_media_quality,
+                self.item.id,
+                self.item.review_version,
+                str(self.note),
+            )
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.edit_message(embed=media_quality_embed(updated), view=MediaQualityView(updated, self.repository, get_settings()))
+        await interaction.response.edit_message(
+            embed=media_quality_embed(updated),
+            view=MediaQualityView(updated, self.repository, get_settings()),
+        )
 
 
 class MediaQualityIssueView(discord.ui.View):
@@ -2494,32 +2590,49 @@ class MediaQualityIssueView(discord.ui.View):
     async def _edit(self, interaction: discord.Interaction) -> None:
         self.previous.disabled = self.position == 0
         self.next.disabled = self.position >= len(self.issues) - 1
-        await interaction.response.edit_message(embed=media_quality_issue_embed(self.issues[self.position], self.position, len(self.issues)), view=self)
+        await interaction.response.edit_message(
+            embed=media_quality_issue_embed(
+                self.issues[self.position], self.position, len(self.issues)
+            ),
+            view=self,
+        )
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
-    async def previous(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityIssueView"]) -> None:
+    async def previous(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityIssueView"]
+    ) -> None:
         self.position -= 1
         await self._edit(interaction)
 
     @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
-    async def next(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityIssueView"]) -> None:
+    async def next(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityIssueView"]
+    ) -> None:
         self.position += 1
         await self._edit(interaction)
 
 
 class MediaQualityView(discord.ui.View):
-    def __init__(self, item: RenderedMediaInspection, repository: ProductionRepository, settings: Settings) -> None:
+    def __init__(
+        self, item: RenderedMediaInspection, repository: ProductionRepository, settings: Settings
+    ) -> None:
         super().__init__(timeout=600)
         self.item, self.repository, self.settings = item, repository, settings
 
     async def _authorized(self, interaction: discord.Interaction) -> bool:
-        if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
-            await interaction.response.send_message(unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True)
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(
+            interaction.user, self.settings
+        ):
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
     @discord.ui.button(label="Refresh Status", style=discord.ButtonStyle.secondary)
-    async def refresh_status(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def refresh_status(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
@@ -2533,54 +2646,87 @@ class MediaQualityView(discord.ui.View):
         )
 
     @discord.ui.button(label="View Issues", style=discord.ButtonStyle.secondary)
-    async def issues(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def issues(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         rows = await asyncio.to_thread(self.repository.rendered_media_issues, self.item.id)
         if not rows:
-            await interaction.response.send_message("No material issue rows were recorded. Review the private preview for the stated limitations.", ephemeral=True)
+            await interaction.response.send_message(
+                "No material issue rows were recorded. Review the private preview for the stated limitations.",
+                ephemeral=True,
+            )
             return
-        await interaction.response.send_message(embed=media_quality_issue_embed(rows[0], 0, len(rows)), view=MediaQualityIssueView(rows), ephemeral=True)
+        await interaction.response.send_message(
+            embed=media_quality_issue_embed(rows[0], 0, len(rows)),
+            view=MediaQualityIssueView(rows),
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="Open Preview", style=discord.ButtonStyle.secondary)
-    async def preview(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def preview(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
-            issued = await asyncio.to_thread(self.repository.create_preview, self.item.clip_id, True)
+            issued = await asyncio.to_thread(
+                self.repository.create_preview, self.item.clip_id, True
+            )
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
         view = discord.ui.View(timeout=600)
-        view.add_item(discord.ui.Button(label="Open Preview", style=discord.ButtonStyle.link, url=issued.url))
-        await interaction.response.send_message("Private preview link refreshed for visual review.", view=view, ephemeral=True)
+        view.add_item(
+            discord.ui.Button(label="Open Preview", style=discord.ButtonStyle.link, url=issued.url)
+        )
+        await interaction.response.send_message(
+            "Private preview link refreshed for visual review.", view=view, ephemeral=True
+        )
 
     @discord.ui.button(label="View Timeline", style=discord.ButtonStyle.secondary)
-    async def timeline(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def timeline(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         rows = await asyncio.to_thread(self.repository.rendered_media_issues, self.item.id)
         if not rows:
-            await interaction.response.send_message("Timeline has no material issue moments. The inspection remains advisory.", ephemeral=True)
+            await interaction.response.send_message(
+                "Timeline has no material issue moments. The inspection remains advisory.",
+                ephemeral=True,
+            )
             return
-        moments = "\n".join(f"• {(issue.start_seconds if issue.start_seconds is not None else 0):.1f}s — {issue.issue_type.replace('_', ' ').title()} ({issue.severity.lower()})" for issue in rows[:10])
+        moments = "\n".join(
+            f"• {(issue.start_seconds if issue.start_seconds is not None else 0):.1f}s — {issue.issue_type.replace('_', ' ').title()} ({issue.severity.lower()})"
+            for issue in rows[:10]
+        )
         await interaction.response.send_message(f"Inspection timeline\n{moments}", ephemeral=True)
 
     @discord.ui.button(label="Regenerate", style=discord.ButtonStyle.primary)
-    async def regenerate(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def regenerate(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
             item = await asyncio.to_thread(self.repository.media_quality, self.item.clip_id, True)
             from app.worker import inspect_rendered_media
+
             inspect_rendered_media.delay(str(item.clip_id))
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.edit_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings))
+        await interaction.response.edit_message(
+            embed=media_quality_embed(item),
+            view=MediaQualityView(item, self.repository, self.settings),
+        )
 
     @discord.ui.button(label="Build Fix Plan", style=discord.ButtonStyle.primary)
-    async def build_fix_plan(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def build_fix_plan(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
@@ -2596,78 +2742,122 @@ class MediaQualityView(discord.ui.View):
         )
 
     @discord.ui.button(label="Add Note", style=discord.ButtonStyle.secondary)
-    async def note(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def note(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if await self._authorized(interaction):
             await interaction.response.send_modal(MediaQualityNoteModal(self.item, self.repository))
 
     @discord.ui.button(label="Approve Advice", style=discord.ButtonStyle.success)
-    async def approve(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def approve(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
-            item = await asyncio.to_thread(self.repository.decide_media_quality, self.item.id, self.item.review_version, True)
+            item = await asyncio.to_thread(
+                self.repository.decide_media_quality, self.item.id, self.item.review_version, True
+            )
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.edit_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings))
+        await interaction.response.edit_message(
+            embed=media_quality_embed(item),
+            view=MediaQualityView(item, self.repository, self.settings),
+        )
 
     @discord.ui.button(label="Reject Advice", style=discord.ButtonStyle.danger)
-    async def reject(self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]) -> None:
+    async def reject(
+        self, interaction: discord.Interaction, _: discord.ui.Button["MediaQualityView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
-            item = await asyncio.to_thread(self.repository.decide_media_quality, self.item.id, self.item.review_version, False)
+            item = await asyncio.to_thread(
+                self.repository.decide_media_quality, self.item.id, self.item.review_version, False
+            )
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.edit_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings))
+        await interaction.response.edit_message(
+            embed=media_quality_embed(item),
+            view=MediaQualityView(item, self.repository, self.settings),
+        )
 
 
 class CorrectionPlanView(discord.ui.View):
     """Two deliberate clicks: preview/submission, then explicit confirmation."""
 
-    def __init__(self, plan: ClipCorrectionPlan, rows: list[ClipCorrectionAction], repository: ProductionRepository, settings: Settings) -> None:
+    def __init__(
+        self,
+        plan: ClipCorrectionPlan,
+        rows: list[ClipCorrectionAction],
+        repository: ProductionRepository,
+        settings: Settings,
+    ) -> None:
         super().__init__(timeout=600)
         self.plan, self.rows, self.repository, self.settings = plan, rows, repository, settings
 
     async def _authorized(self, interaction: discord.Interaction) -> bool:
-        if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(
+            interaction.user, self.settings
+        ):
             await interaction.response.send_message(unauthorized_message(), ephemeral=True)
             return False
         return True
 
     @discord.ui.button(label="Review Fix Plan", style=discord.ButtonStyle.secondary)
-    async def review(self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]) -> None:
+    async def review(
+        self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]
+    ) -> None:
         if await self._authorized(interaction):
-            await interaction.response.edit_message(embed=correction_plan_embed(self.plan, self.rows), view=self)
+            await interaction.response.edit_message(
+                embed=correction_plan_embed(self.plan, self.rows), view=self
+            )
 
     @discord.ui.button(label="Submit for Confirmation", style=discord.ButtonStyle.primary)
-    async def submit(self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]) -> None:
+    async def submit(
+        self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
-            self.plan = await asyncio.to_thread(self.repository.submit_correction_plan, self.plan.id, self.plan.review_version)
+            self.plan = await asyncio.to_thread(
+                self.repository.submit_correction_plan, self.plan.id, self.plan.review_version
+            )
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.edit_message(embed=correction_plan_embed(self.plan, self.rows), view=self)
+        await interaction.response.edit_message(
+            embed=correction_plan_embed(self.plan, self.rows), view=self
+        )
 
     @discord.ui.button(label="Confirm Rerender", style=discord.ButtonStyle.success)
-    async def confirm(self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]) -> None:
+    async def confirm(
+        self, interaction: discord.Interaction, _: discord.ui.Button["CorrectionPlanView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         if self.plan.status != CorrectionPlanStatus.AWAITING_CONFIRMATION:
-            await interaction.response.send_message("Submit the reviewed plan before confirmation.", ephemeral=True)
+            await interaction.response.send_message(
+                "Submit the reviewed plan before confirmation.", ephemeral=True
+            )
             return
         try:
-            self.plan = await asyncio.to_thread(self.repository.confirm_correction_plan, self.plan.id, self.plan.review_version)
+            self.plan = await asyncio.to_thread(
+                self.repository.confirm_correction_plan, self.plan.id, self.plan.review_version
+            )
             from app.worker import render_corrected_clip
 
             render_corrected_clip.delay(str(self.plan.id))
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.edit_message(content="Rerender queued. The original remains unchanged; refresh after reinspection.", embed=correction_plan_embed(self.plan, self.rows), view=self)
+        await interaction.response.edit_message(
+            content="Rerender queued. The original remains unchanged; refresh after reinspection.",
+            embed=correction_plan_embed(self.plan, self.rows),
+            view=self,
+        )
 
 
 def producer_confidence_label(confidence: float) -> str:
@@ -2681,9 +2871,13 @@ def producer_confidence_label(confidence: float) -> str:
 def producer_advice_embed(item: ProducerRecommendation, position: int, total: int) -> discord.Embed:
     recommendation = item.recommendation_json.get("recommendation", "Review this recommendation.")
     evidence = item.evidence_json[:2]
-    summary = "\n".join(
-        f"• {str(row.get('note', 'Stored evidence')).replace('Persisted ', '')}" for row in evidence
-    ) or "• Evidence is limited; review the full source context."
+    summary = (
+        "\n".join(
+            f"• {str(row.get('note', 'Stored evidence')).replace('Persisted ', '')}"
+            for row in evidence
+        )
+        or "• Evidence is limited; review the full source context."
+    )
     embed = discord.Embed(title=f"AI Producer advice {position + 1} of {total}")
     embed.description = str(recommendation).replace("_", " ").title()
     embed.add_field(
@@ -2695,7 +2889,9 @@ def producer_advice_embed(item: ProducerRecommendation, position: int, total: in
     embed.add_field(name="Strongest evidence", value=summary[:700], inline=False)
     operator_edits = item.operator_edit_json or {}
     if operator_edits.get("operator_note"):
-        embed.add_field(name="Your note", value=str(operator_edits["operator_note"])[:500], inline=False)
+        embed.add_field(
+            name="Your note", value=str(operator_edits["operator_note"])[:500], inline=False
+        )
     embed.set_footer(text="Advice only. Approving or rejecting this does not change the pipeline.")
     return embed
 
@@ -2743,7 +2939,12 @@ class ProducerRecommendationView(discord.ui.View):
         position: int = 0,
     ) -> None:
         super().__init__(timeout=600)
-        self.project_id, self.items, self.repository, self.settings = project_id, items, repository, settings
+        self.project_id, self.items, self.repository, self.settings = (
+            project_id,
+            items,
+            repository,
+            settings,
+        )
         self.position = min(position, max(0, len(items) - 1))
         self._apply_state()
 
@@ -2756,13 +2957,19 @@ class ProducerRecommendationView(discord.ui.View):
         self.next.disabled = self.position >= len(self.items) - 1
 
     async def _authorized(self, interaction: discord.Interaction) -> bool:
-        if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
-            await interaction.response.send_message(unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True)
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(
+            interaction.user, self.settings
+        ):
+            await interaction.response.send_message(
+                unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+            )
             return False
         return True
 
     async def _refresh_after_decision(self, interaction: discord.Interaction) -> None:
-        pending = await asyncio.to_thread(self.repository.pending_producer_recommendations, self.project_id)
+        pending = await asyncio.to_thread(
+            self.repository.pending_producer_recommendations, self.project_id
+        )
         if not pending:
             await interaction.response.edit_message(
                 content="All current Producer advice is reviewed. No project, queue, or publishing state changed.",
@@ -2779,76 +2986,117 @@ class ProducerRecommendationView(discord.ui.View):
         )
 
     @discord.ui.button(label="Approve", style=discord.ButtonStyle.success)
-    async def approve(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+    async def approve(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
-            await asyncio.to_thread(self.repository.decide_producer_recommendation, self.item.id, self.item.review_version, True)
+            await asyncio.to_thread(
+                self.repository.decide_producer_recommendation,
+                self.item.id,
+                self.item.review_version,
+                True,
+            )
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
         await self._refresh_after_decision(interaction)
 
     @discord.ui.button(label="Reject", style=discord.ButtonStyle.danger)
-    async def reject(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+    async def reject(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         try:
-            await asyncio.to_thread(self.repository.decide_producer_recommendation, self.item.id, self.item.review_version, False)
+            await asyncio.to_thread(
+                self.repository.decide_producer_recommendation,
+                self.item.id,
+                self.item.review_version,
+                False,
+            )
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
         await self._refresh_after_decision(interaction)
 
     @discord.ui.button(label="Add / Edit Note", style=discord.ButtonStyle.secondary)
-    async def add_note(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+    async def add_note(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
+    ) -> None:
         if await self._authorized(interaction):
-            await interaction.response.send_modal(ProducerNoteModal(self.item, self.repository, self))
+            await interaction.response.send_modal(
+                ProducerNoteModal(self.item, self.repository, self)
+            )
 
     @discord.ui.button(label="More Details", style=discord.ButtonStyle.secondary)
-    async def details(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+    async def details(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
-        evidence = "\n".join(
-            f"• {row.get('note', 'Evidence')}: {str(row.get('value', 'not available'))[:180]}"
-            for row in self.item.evidence_json[:6]
-        ) or "No additional evidence was stored."
+        evidence = (
+            "\n".join(
+                f"• {row.get('note', 'Evidence')}: {str(row.get('value', 'not available'))[:180]}"
+                for row in self.item.evidence_json[:6]
+            )
+            or "No additional evidence was stored."
+        )
         await interaction.response.send_message(
             f"**Detailed evidence**\n{evidence}\n\n**Warning**\nThis is advisory. Review source context before operating the pipeline.",
             ephemeral=True,
         )
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
-    async def back(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+    async def back(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         state = await asyncio.to_thread(self.repository.dashboard, self.project_id)
         view = GuidedProjectView(self.project_id, self.repository, self.settings)
         view.apply_state(state)
-        await interaction.response.edit_message(content=None, embed=guided_project_embed(state), view=view)
+        await interaction.response.edit_message(
+            content=None, embed=guided_project_embed(state), view=view
+        )
 
     @discord.ui.button(label="Home", style=discord.ButtonStyle.secondary)
-    async def home(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+    async def home(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         state = await asyncio.to_thread(self.repository.control_center)
-        await interaction.response.edit_message(content=None, embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings))
+        await interaction.response.edit_message(
+            content=None,
+            embed=control_center_embed(state),
+            view=OperatorHomeView(self.repository, self.settings),
+        )
 
     @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary, row=1)
-    async def previous(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+    async def previous(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         self.position = max(0, self.position - 1)
         self._apply_state()
-        await interaction.response.edit_message(embed=producer_advice_embed(self.item, self.position, len(self.items)), view=self)
+        await interaction.response.edit_message(
+            embed=producer_advice_embed(self.item, self.position, len(self.items)), view=self
+        )
 
     @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary, row=1)
-    async def next(self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]) -> None:
+    async def next(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ProducerRecommendationView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         self.position = min(len(self.items) - 1, self.position + 1)
         self._apply_state()
-        await interaction.response.edit_message(embed=producer_advice_embed(self.item, self.position, len(self.items)), view=self)
+        await interaction.response.edit_message(
+            embed=producer_advice_embed(self.item, self.position, len(self.items)), view=self
+        )
 
 
 def opportunity_embed(state: OpportunityReviewState) -> discord.Embed:
@@ -3368,7 +3616,9 @@ class ClipReviewView(discord.ui.View):
         )
 
     @discord.ui.button(
-        label="Quality Report", style=discord.ButtonStyle.secondary, custom_id="viralforge:clip:quality-report"
+        label="Quality Report",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:clip:quality-report",
     )
     async def quality_report(
         self, interaction: discord.Interaction, _: discord.ui.Button["ClipReviewView"]
@@ -3380,10 +3630,14 @@ class ClipReviewView(discord.ui.View):
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.send_message(embed=clip_quality_report_embed(report), ephemeral=True)
+        await interaction.response.send_message(
+            embed=clip_quality_report_embed(report), ephemeral=True
+        )
 
     @discord.ui.button(
-        label="Media Quality", style=discord.ButtonStyle.secondary, custom_id="viralforge:clip:media-quality"
+        label="Media Quality",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:clip:media-quality",
     )
     async def media_quality(
         self, interaction: discord.Interaction, _: discord.ui.Button["ClipReviewView"]
@@ -3394,11 +3648,16 @@ class ClipReviewView(discord.ui.View):
             item = await asyncio.to_thread(self.repository.media_quality, self.state.clip.id)
             if item.status == "QUEUED":
                 from app.worker import inspect_rendered_media
+
                 inspect_rendered_media.delay(str(self.state.clip.id))
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
-        await interaction.response.send_message(embed=media_quality_embed(item), view=MediaQualityView(item, self.repository, self.settings), ephemeral=True)
+        await interaction.response.send_message(
+            embed=media_quality_embed(item),
+            view=MediaQualityView(item, self.repository, self.settings),
+            ephemeral=True,
+        )
 
     async def _edit_review(self, interaction: discord.Interaction) -> None:
         self.previous.disabled = self.state.position == 0
@@ -4078,23 +4337,47 @@ def legacy_guided_project_embed(state: DashboardState) -> discord.Embed:
     if project.status == "SOURCE_REVIEW_REQUIRED":
         progress, next_step = "Source → Review", "Choose whether to use this video."
     elif project.status == "DOWNLOADING":
-        progress, next_step = "Source → Downloading", "ViralForge is securely downloading this video."
+        progress, next_step = (
+            "Source → Downloading",
+            "ViralForge is securely downloading this video.",
+        )
     elif not project.source_storage_key:
-        progress, next_step = "Source → Preparing", "ViralForge is preparing this video automatically."
+        progress, next_step = (
+            "Source → Preparing",
+            "ViralForge is preparing this video automatically.",
+        )
     elif state.analysis is None or state.analysis.status in {"QUEUED", "RUNNING"}:
-        progress, next_step = "Source → Preparing video", "ViralForge is reviewing the video and finding moments."
+        progress, next_step = (
+            "Source → Preparing video",
+            "ViralForge is reviewing the video and finding moments.",
+        )
     elif not state.opportunity_count:
-        progress, next_step = "Source → Finding moments", "ViralForge is preparing clip suggestions."
+        progress, next_step = (
+            "Source → Finding moments",
+            "ViralForge is preparing clip suggestions.",
+        )
     elif state.pending_opportunity_count:
         progress, next_step = "Source → Suggested clips", "Choose the clip you want to use next."
     elif state.approved_opportunity_count and not state.total_clips:
-        progress, next_step = "Source → Rendering", "ViralForge is creating your approved clip automatically."
+        progress, next_step = (
+            "Source → Rendering",
+            "ViralForge is creating your approved clip automatically.",
+        )
     elif state.opportunity_count and not state.total_clips:
-        progress, next_step = "Source → Suggestions reviewed", "No clips were selected. Choose another video when ready."
+        progress, next_step = (
+            "Source → Suggestions reviewed",
+            "No clips were selected. Choose another video when ready.",
+        )
     elif state.total_clips and state.approved < state.total_clips:
-        progress, next_step = "Source → Clip ready", "Review the finished clip before it becomes content-ready."
+        progress, next_step = (
+            "Source → Clip ready",
+            "Review the finished clip before it becomes content-ready.",
+        )
     else:
-        progress, next_step = "Source → Content ready", "Review the posting decision when you are ready."
+        progress, next_step = (
+            "Source → Content ready",
+            "Review the posting decision when you are ready.",
+        )
     embed = discord.Embed(title=source_name[:256], description=f"**{progress}**\n{next_step}")
     embed.add_field(name="Original video", value=project.source_url[:1024], inline=False)
     embed.add_field(
@@ -4154,7 +4437,9 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
 
     eyebrow = "VIDEO ADDED"
     title = source_name
-    description = "This video has been added to the workspace. ViralForge will prepare it for review."
+    description = (
+        "This video has been added to the workspace. ViralForge will prepare it for review."
+    )
     current_stage = friendly_project_status(status)
     next_step = "Refresh status when you want the latest update."
 
@@ -4206,7 +4491,9 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
     elif state.opportunity_count and not state.total_clips:
         eyebrow = "REVIEW"
         title = "Suggestions reviewed"
-        description = "No clips were selected from this video. You can choose another video when ready."
+        description = (
+            "No clips were selected from this video. You can choose another video when ready."
+        )
         current_stage = "No clips selected"
         next_step = "Choose another video to continue."
     elif state.total_clips and state.approved < state.total_clips:
@@ -4241,7 +4528,10 @@ def guided_project_embed(state: DashboardState) -> discord.Embed:
         milestones = [
             ("Source selected", status != "SOURCE_REVIEW_REQUIRED"),
             ("Preparing video", bool(project.source_storage_key)),
-            ("Analyze content", state.analysis is not None and state.analysis.status == "COMPLETED"),
+            (
+                "Analyze content",
+                state.analysis is not None and state.analysis.status == "COMPLETED",
+            ),
             ("Review clips", state.total_clips > 0),
             ("Publish", state.queued > 0),
         ]
@@ -4288,7 +4578,11 @@ class GuidedProjectView(discord.ui.View):
             return False
         return True
 
-    @discord.ui.button(label="View Progress", style=discord.ButtonStyle.success, custom_id="viralforge:guided:continue")
+    @discord.ui.button(
+        label="View Progress",
+        style=discord.ButtonStyle.success,
+        custom_id="viralforge:guided:continue",
+    )
     async def continue_working(
         self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
     ) -> None:
@@ -4374,7 +4668,11 @@ class GuidedProjectView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Choose Another Video", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:alternatives")
+    @discord.ui.button(
+        label="Choose Another Video",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:guided:alternatives",
+    )
     async def alternatives(
         self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
     ) -> None:
@@ -4383,17 +4681,27 @@ class GuidedProjectView(discord.ui.View):
         state = await asyncio.to_thread(self.repository.dashboard, self.project_id)
         candidates = await asyncio.to_thread(self.repository.sources, self.project_id)
         if not candidates:
-            await interaction.response.send_message("No alternative videos are available for this item.", ephemeral=True)
+            await interaction.response.send_message(
+                "No alternative videos are available for this item.", ephemeral=True
+            )
             return
         await interaction.response.send_message(
             embed=candidate_embed(candidates),
             view=CandidateReviewView(
-                self.project_id, state.project.source_decision_version, candidates, self.repository, self.settings
+                self.project_id,
+                state.project.source_decision_version,
+                candidates,
+                self.repository,
+                self.settings,
             ),
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Advanced Details", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:details")
+    @discord.ui.button(
+        label="Advanced Details",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:guided:details",
+    )
     async def details(
         self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
     ) -> None:
@@ -4407,27 +4715,41 @@ class GuidedProjectView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Producer Advice", style=discord.ButtonStyle.primary, custom_id="viralforge:guided:producer")
+    @discord.ui.button(
+        label="Producer Advice",
+        style=discord.ButtonStyle.primary,
+        custom_id="viralforge:guided:producer",
+    )
     async def producer_advice(
         self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
     ) -> None:
         if not await self._authorized(interaction):
             return
         try:
-            recommendations = await asyncio.to_thread(self.repository.producer_recommendations, self.project_id)
+            recommendations = await asyncio.to_thread(
+                self.repository.producer_recommendations, self.project_id
+            )
         except ProductionError as error:
             await interaction.response.send_message(user_error(error), ephemeral=True)
             return
         if not recommendations:
-            await interaction.response.send_message("No Producer advice is available yet.", ephemeral=True)
+            await interaction.response.send_message(
+                "No Producer advice is available yet.", ephemeral=True
+            )
             return
         await interaction.response.send_message(
             embed=producer_advice_embed(recommendations[0], 0, len(recommendations)),
-            view=ProducerRecommendationView(self.project_id, recommendations, self.repository, self.settings),
+            view=ProducerRecommendationView(
+                self.project_id, recommendations, self.repository, self.settings
+            ),
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Refresh Status", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:refresh")
+    @discord.ui.button(
+        label="Refresh Status",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:guided:refresh",
+    )
     async def refresh(
         self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
     ) -> None:
@@ -4437,7 +4759,11 @@ class GuidedProjectView(discord.ui.View):
         self.apply_state(state)
         await interaction.response.edit_message(embed=guided_project_embed(state), view=self)
 
-    @discord.ui.button(label="Back to Workspace", style=discord.ButtonStyle.secondary, custom_id="viralforge:guided:home")
+    @discord.ui.button(
+        label="Back to Workspace",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:guided:home",
+    )
     async def home(
         self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
     ) -> None:
@@ -4451,7 +4777,9 @@ class GuidedProjectView(discord.ui.View):
 
 class AddVideoModal(discord.ui.Modal, title="Add a video"):
     url: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
-        label="YouTube video URL", placeholder="https://www.youtube.com/watch?v=...", max_length=2048
+        label="YouTube video URL",
+        placeholder="https://www.youtube.com/watch?v=...",
+        max_length=2048,
     )
 
     def __init__(self, repository: ProductionRepository, settings: Settings) -> None:
@@ -4475,7 +4803,9 @@ class AddVideoModal(discord.ui.Modal, title="Add a video"):
 
 
 def manual_video_confirmation_embed(url: str) -> discord.Embed:
-    embed = discord.Embed(title="Confirm video", description="One short check before ViralForge begins processing.")
+    embed = discord.Embed(
+        title="Confirm video", description="One short check before ViralForge begins processing."
+    )
     embed.add_field(name="Video", value=url[:1024], inline=False)
     embed.add_field(
         name="Rights reminder",
@@ -4496,7 +4826,9 @@ class RetryManualVideoView(discord.ui.View):
         self.repository, self.settings = repository, settings
 
     @discord.ui.button(label="Try Again", style=discord.ButtonStyle.primary)
-    async def retry(self, interaction: discord.Interaction, _: discord.ui.Button["RetryManualVideoView"]) -> None:
+    async def retry(
+        self, interaction: discord.Interaction, _: discord.ui.Button["RetryManualVideoView"]
+    ) -> None:
         await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
 
 
@@ -4528,7 +4860,9 @@ class ManualVideoConfirmationView(discord.ui.View):
         )
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
-    async def back(self, interaction: discord.Interaction, _: discord.ui.Button["ManualVideoConfirmationView"]) -> None:
+    async def back(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ManualVideoConfirmationView"]
+    ) -> None:
         await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
 
 
@@ -4567,11 +4901,27 @@ class DiscoveryTypeSelect(discord.ui.Select["DiscoverySetupView"]):
             min_values=1,
             max_values=1,
             options=[
-                discord.SelectOption(label="Manual Video", value="MANUAL", description="Add one video URL now"),
-                discord.SelectOption(label="YouTube Channel", value="YOUTUBE_CHANNEL", description="Configure a monitored channel"),
-                discord.SelectOption(label="YouTube Playlist", value="YOUTUBE_PLAYLIST", description="Coming soon: track a playlist"),
-                discord.SelectOption(label="RSS Feed", value="RSS", description="Coming soon in Discord"),
-                discord.SelectOption(label="Website", value="WEBPAGE", description="Coming soon: monitor a public page"),
+                discord.SelectOption(
+                    label="Manual Video", value="MANUAL", description="Add one video URL now"
+                ),
+                discord.SelectOption(
+                    label="YouTube Channel",
+                    value="YOUTUBE_CHANNEL",
+                    description="Configure a monitored channel",
+                ),
+                discord.SelectOption(
+                    label="YouTube Playlist",
+                    value="YOUTUBE_PLAYLIST",
+                    description="Coming soon: track a playlist",
+                ),
+                discord.SelectOption(
+                    label="RSS Feed", value="RSS", description="Coming soon in Discord"
+                ),
+                discord.SelectOption(
+                    label="Website",
+                    value="WEBPAGE",
+                    description="Coming soon: monitor a public page",
+                ),
             ],
         )
 
@@ -4585,7 +4935,9 @@ class DiscoveryTypeSelect(discord.ui.Select["DiscoverySetupView"]):
 
 
 class DiscoverySetupView(discord.ui.View):
-    def __init__(self, repository: DiscoveryRepository, settings: Settings, brand_name: str) -> None:
+    def __init__(
+        self, repository: DiscoveryRepository, settings: Settings, brand_name: str
+    ) -> None:
         super().__init__(timeout=600)
         self.repository, self.settings, self.brand_name = repository, settings, brand_name
         self.source_kind = "MANUAL"
@@ -4596,7 +4948,9 @@ class DiscoverySetupView(discord.ui.View):
         self, interaction: discord.Interaction, _: discord.ui.Button["DiscoverySetupView"]
     ) -> None:
         if self.source_kind == "YOUTUBE_CHANNEL":
-            await interaction.response.send_modal(YouTubeChannelModal(self.repository, self.settings))
+            await interaction.response.send_modal(
+                YouTubeChannelModal(self.repository, self.settings)
+            )
             return
         if self.source_kind == "MANUAL":
             await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
@@ -4628,7 +4982,9 @@ class DiscoverySetupView(discord.ui.View):
 
 
 class ComingSoonSetupView(discord.ui.View):
-    def __init__(self, repository: DiscoveryRepository, settings: Settings, brand_name: str) -> None:
+    def __init__(
+        self, repository: DiscoveryRepository, settings: Settings, brand_name: str
+    ) -> None:
         super().__init__(timeout=300)
         self.repository, self.settings, self.brand_name = repository, settings, brand_name
 
@@ -4664,7 +5020,9 @@ class YouTubeChannelModal(discord.ui.Modal, title="Add a YouTube channel"):
         # waiting on it rather than allowing Discord to time out the modal.
         await interaction.response.defer(thinking=True, ephemeral=True)
         try:
-            channel = await asyncio.to_thread(self.repository.preview_youtube_channel, str(self.reference))
+            channel = await asyncio.to_thread(
+                self.repository.preview_youtube_channel, str(self.reference)
+            )
         except ProductionError as error:
             await interaction.edit_original_response(
                 content=user_error(error),
@@ -4678,10 +5036,20 @@ class YouTubeChannelModal(discord.ui.Modal, title="Add a YouTube channel"):
 
 
 def youtube_channel_confirmation_embed(channel: YouTubeChannel) -> discord.Embed:
-    embed = discord.Embed(title="Confirm discovery source", description="We found this public YouTube channel.")
+    embed = discord.Embed(
+        title="Confirm discovery source", description="We found this public YouTube channel."
+    )
     embed.add_field(name="Channel", value=channel.title, inline=True)
-    embed.add_field(name="Videos", value=str(channel.video_count) if channel.video_count is not None else "Unavailable", inline=True)
-    embed.add_field(name="Latest upload", value=channel.latest_upload_title or "No recent upload found", inline=False)
+    embed.add_field(
+        name="Videos",
+        value=str(channel.video_count) if channel.video_count is not None else "Unavailable",
+        inline=True,
+    )
+    embed.add_field(
+        name="Latest upload",
+        value=channel.latest_upload_title or "No recent upload found",
+        inline=False,
+    )
     embed.add_field(name="Status", value="Ready to enable", inline=True)
     if channel.thumbnail_url:
         embed.set_thumbnail(url=channel.thumbnail_url)
@@ -4694,22 +5062,30 @@ class RetryDiscoverySetupView(discord.ui.View):
         self.repository, self.settings = repository, settings
 
     @discord.ui.button(label="Try Again", style=discord.ButtonStyle.primary)
-    async def retry(self, interaction: discord.Interaction, _: discord.ui.Button["RetryDiscoverySetupView"]) -> None:
+    async def retry(
+        self, interaction: discord.Interaction, _: discord.ui.Button["RetryDiscoverySetupView"]
+    ) -> None:
         await interaction.response.send_modal(YouTubeChannelModal(self.repository, self.settings))
 
     @discord.ui.button(label="Add Video Instead", style=discord.ButtonStyle.secondary)
-    async def manual(self, interaction: discord.Interaction, _: discord.ui.Button["RetryDiscoverySetupView"]) -> None:
+    async def manual(
+        self, interaction: discord.Interaction, _: discord.ui.Button["RetryDiscoverySetupView"]
+    ) -> None:
         await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
 
 
 class DiscoverySourceConfirmationView(discord.ui.View):
-    def __init__(self, channel: YouTubeChannel, repository: DiscoveryRepository, settings: Settings) -> None:
+    def __init__(
+        self, channel: YouTubeChannel, repository: DiscoveryRepository, settings: Settings
+    ) -> None:
         super().__init__(timeout=600)
         self.channel, self.repository, self.settings = channel, repository, settings
 
     @discord.ui.button(label="Enable Source", style=discord.ButtonStyle.success)
     async def enable(
-        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoverySourceConfirmationView"]
+        self,
+        interaction: discord.Interaction,
+        _: discord.ui.Button["DiscoverySourceConfirmationView"],
     ) -> None:
         try:
             source = await asyncio.to_thread(self.repository.enable_youtube_channel, self.channel)
@@ -4728,7 +5104,9 @@ class DiscoverySourceConfirmationView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
     async def cancel(
-        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoverySourceConfirmationView"]
+        self,
+        interaction: discord.Interaction,
+        _: discord.ui.Button["DiscoverySourceConfirmationView"],
     ) -> None:
         state = await asyncio.to_thread(self.repository.control_center)
         await interaction.response.edit_message(
@@ -4737,7 +5115,9 @@ class DiscoverySourceConfirmationView(discord.ui.View):
 
 
 class DiscoveryRunNowView(discord.ui.View):
-    def __init__(self, source: DiscoverySource, repository: DiscoveryRepository, settings: Settings) -> None:
+    def __init__(
+        self, source: DiscoverySource, repository: DiscoveryRepository, settings: Settings
+    ) -> None:
         super().__init__(timeout=600)
         self.source, self.repository, self.settings = source, repository, settings
 
@@ -4769,7 +5149,9 @@ class DiscoveryRunNowView(discord.ui.View):
         )
 
     @discord.ui.button(label="Back Home", style=discord.ButtonStyle.secondary)
-    async def home(self, interaction: discord.Interaction, _: discord.ui.Button["DiscoveryRunNowView"]) -> None:
+    async def home(
+        self, interaction: discord.Interaction, _: discord.ui.Button["DiscoveryRunNowView"]
+    ) -> None:
         state = await asyncio.to_thread(self.repository.control_center)
         await interaction.response.edit_message(
             embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
@@ -4782,7 +5164,9 @@ class ReviewFoundVideosView(discord.ui.View):
         self.repository, self.settings = repository, settings
 
     @discord.ui.button(label="Review Videos", style=discord.ButtonStyle.success)
-    async def review(self, interaction: discord.Interaction, _: discord.ui.Button["ReviewFoundVideosView"]) -> None:
+    async def review(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ReviewFoundVideosView"]
+    ) -> None:
         items = await asyncio.to_thread(self.repository.discovery_queue)
         if not items:
             await interaction.response.send_message(
@@ -4817,7 +5201,9 @@ class ReviewFoundVideosView(discord.ui.View):
         await interaction.response.send_message(message, ephemeral=True)
 
     @discord.ui.button(label="Return Home", style=discord.ButtonStyle.secondary)
-    async def home(self, interaction: discord.Interaction, _: discord.ui.Button["ReviewFoundVideosView"]) -> None:
+    async def home(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ReviewFoundVideosView"]
+    ) -> None:
         state = await asyncio.to_thread(self.repository.control_center)
         await interaction.response.edit_message(
             embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
@@ -4826,6 +5212,7 @@ class ReviewFoundVideosView(discord.ui.View):
 
 class ContentReadySetupView(discord.ui.View):
     """Guidance boundary for publishing setup; credentials never enter Discord."""
+
     def __init__(self, repository: ProductionRepository, settings: Settings) -> None:
         super().__init__(timeout=300)
         self.repository, self.settings = repository, settings
@@ -4875,7 +5262,9 @@ class ContentReadySetupView(discord.ui.View):
         )
 
     @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
-    async def back(self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]) -> None:
+    async def back(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]
+    ) -> None:
         state = await asyncio.to_thread(self.repository.control_center)
         await interaction.response.edit_message(
             embed=control_center_embed(state), view=OperatorHomeView(self.repository, self.settings)
@@ -4884,6 +5273,7 @@ class ContentReadySetupView(discord.ui.View):
 
 class OperatorHomeView(discord.ui.View):
     """Compact workspace navigation with one state-specific primary action."""
+
     def __init__(
         self,
         repository: ProductionRepository,
@@ -4916,7 +5306,9 @@ class OperatorHomeView(discord.ui.View):
         self.continue_working.label = label
 
     async def _authorized(self, interaction: discord.Interaction) -> bool:
-        if not isinstance(interaction.user, discord.Member) or not is_authorized(interaction.user, self.settings):
+        if not isinstance(interaction.user, discord.Member) or not is_authorized(
+            interaction.user, self.settings
+        ):
             await interaction.response.send_message(
                 unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
             )
@@ -4927,15 +5319,27 @@ class OperatorHomeView(discord.ui.View):
         projects = await asyncio.to_thread(self.repository.projects, "SOURCE_REVIEW_REQUIRED")
         if projects:
             state = await asyncio.to_thread(self.repository.dashboard, projects[0].id)
-            await interaction.response.send_message(embed=guided_project_embed(state), view=GuidedProjectView(state.project.id, self.repository, self.settings), ephemeral=True)
+            await interaction.response.send_message(
+                embed=guided_project_embed(state),
+                view=GuidedProjectView(state.project.id, self.repository, self.settings),
+                ephemeral=True,
+            )
             return
         opportunity = await asyncio.to_thread(self.repository.first_pending_opportunity)
         if opportunity is not None:
-            await interaction.response.send_message(embed=opportunity_embed(opportunity), view=OpportunityReviewView(opportunity, self.repository, self.settings), ephemeral=True)
+            await interaction.response.send_message(
+                embed=opportunity_embed(opportunity),
+                view=OpportunityReviewView(opportunity, self.repository, self.settings),
+                ephemeral=True,
+            )
             return
         clip = await asyncio.to_thread(self.repository.first_pending_clip)
         if clip is not None:
-            await interaction.response.send_message(embed=clip_embed(clip.clip, clip.total), view=ClipReviewView(clip, self.repository, self.settings), ephemeral=True)
+            await interaction.response.send_message(
+                embed=clip_embed(clip.clip, clip.total),
+                view=ClipReviewView(clip, self.repository, self.settings),
+                ephemeral=True,
+            )
             return
         home_state = await asyncio.to_thread(self.repository.control_center)
         discovery_repository = DiscoveryRepository(self.settings)
@@ -4958,9 +5362,13 @@ class OperatorHomeView(discord.ui.View):
             return
         queue = await asyncio.to_thread(self.repository.queue)
         if queue:
-            await interaction.response.send_message(embed=ready_to_post_embed(queue, self.settings), ephemeral=True)
+            await interaction.response.send_message(
+                embed=ready_to_post_embed(queue, self.settings), ephemeral=True
+            )
             return
-        await interaction.response.send_message("Everything is caught up. Add a video or find a new one to continue.", ephemeral=True)
+        await interaction.response.send_message(
+            "Everything is caught up. Add a video or find a new one to continue.", ephemeral=True
+        )
 
     @discord.ui.button(
         label="View Progress",
@@ -4973,8 +5381,14 @@ class OperatorHomeView(discord.ui.View):
         if await self._authorized(interaction):
             await self._open_next(interaction)
 
-    @discord.ui.button(label="Find Sources", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:find")
-    async def find_videos(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+    @discord.ui.button(
+        label="Find Sources",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:operator:find",
+    )
+    async def find_videos(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         state = await asyncio.to_thread(self.repository.control_center)
@@ -4989,24 +5403,43 @@ class OperatorHomeView(discord.ui.View):
             return
         items = await asyncio.to_thread(DiscoveryRepository(self.settings).discovery_queue)
         if not items:
-            await interaction.response.send_message("ViralForge is checking your approved sources. No videos need review yet.", ephemeral=True)
+            await interaction.response.send_message(
+                "ViralForge is checking your approved sources. No videos need review yet.",
+                ephemeral=True,
+            )
             return
-        await interaction.response.send_message(embed=discovery_embed(items[0]), view=DiscoveryReviewView(items[0], DiscoveryRepository(self.settings), self.settings), ephemeral=True)
+        await interaction.response.send_message(
+            embed=discovery_embed(items[0]),
+            view=DiscoveryReviewView(items[0], DiscoveryRepository(self.settings), self.settings),
+            ephemeral=True,
+        )
 
-    @discord.ui.button(label="Add Video", style=discord.ButtonStyle.primary, custom_id="viralforge:operator:add")
-    async def add_video(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+    @discord.ui.button(
+        label="Add Video", style=discord.ButtonStyle.primary, custom_id="viralforge:operator:add"
+    )
+    async def add_video(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]
+    ) -> None:
         if await self._authorized(interaction):
             await interaction.response.send_modal(AddVideoModal(self.repository, self.settings))
 
-    @discord.ui.button(label="Review", style=discord.ButtonStyle.primary, custom_id="viralforge:operator:review")
+    @discord.ui.button(
+        label="Review", style=discord.ButtonStyle.primary, custom_id="viralforge:operator:review"
+    )
     async def review(
         self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]
     ) -> None:
         if await self._authorized(interaction):
             await self._open_next(interaction)
 
-    @discord.ui.button(label="Ready To Post", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:ready")
-    async def ready_to_post(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+    @discord.ui.button(
+        label="Ready To Post",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:operator:ready",
+    )
+    async def ready_to_post(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         items = await asyncio.to_thread(self.repository.queue)
@@ -5016,8 +5449,14 @@ class OperatorHomeView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Switch Brand", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:brand")
-    async def switch_brand(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+    @discord.ui.button(
+        label="Switch Brand",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:operator:brand",
+    )
+    async def switch_brand(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         brands = await asyncio.to_thread(self.repository.brands)
@@ -5027,8 +5466,14 @@ class OperatorHomeView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Refresh", style=discord.ButtonStyle.secondary, custom_id="viralforge:operator:refresh")
-    async def refresh(self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]) -> None:
+    @discord.ui.button(
+        label="Refresh",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:operator:refresh",
+    )
+    async def refresh(
+        self, interaction: discord.Interaction, _: discord.ui.Button["OperatorHomeView"]
+    ) -> None:
         if not await self._authorized(interaction):
             return
         state = await asyncio.to_thread(self.repository.control_center)
@@ -5042,22 +5487,40 @@ class AdvancedOperatorView(discord.ui.View):
         self.repository, self.settings = repository, settings
 
     @discord.ui.button(label="Projects", style=discord.ButtonStyle.secondary)
-    async def projects(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
+    async def projects(
+        self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]
+    ) -> None:
         projects = await asyncio.to_thread(self.repository.projects)
-        await interaction.response.send_message(embed=projects_embed(projects, "Projects", "No videos have been added yet."), view=ProjectListView(projects, self.repository, self.settings), ephemeral=True)
+        await interaction.response.send_message(
+            embed=projects_embed(projects, "Projects", "No videos have been added yet."),
+            view=ProjectListView(projects, self.repository, self.settings),
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="System Details", style=discord.ButtonStyle.secondary)
-    async def status(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
+    async def status(
+        self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]
+    ) -> None:
         status = operational_status(self.settings)
-        await interaction.response.send_message(embed=operational_status_embed(status), ephemeral=True)
+        await interaction.response.send_message(
+            embed=operational_status_embed(status), ephemeral=True
+        )
 
     @discord.ui.button(label="Choose Brand", style=discord.ButtonStyle.secondary)
-    async def brands(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
+    async def brands(
+        self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]
+    ) -> None:
         brands = await asyncio.to_thread(self.repository.brands)
-        await interaction.response.send_message("Choose the brand you are working on.", view=BrandSelectionView(brands, self.repository, self.settings), ephemeral=True)
+        await interaction.response.send_message(
+            "Choose the brand you are working on.",
+            view=BrandSelectionView(brands, self.repository, self.settings),
+            ephemeral=True,
+        )
 
     @discord.ui.button(label="Operations", style=discord.ButtonStyle.primary)
-    async def operations(self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]) -> None:
+    async def operations(
+        self, interaction: discord.Interaction, _: discord.ui.Button["AdvancedOperatorView"]
+    ) -> None:
         summary = await asyncio.to_thread(self.repository.operations_summary)
         await interaction.response.send_message(embed=operations_embed(summary), ephemeral=True)
 
@@ -5067,6 +5530,7 @@ def operations_embed(summary: dict[str, object]) -> discord.Embed:
     health = summary["health"]
     queue = summary["queue"]
     briefing = summary["briefing"]
+    autopilot = summary.get("autopilot", {})
     assert isinstance(health, dict) and isinstance(queue, dict) and isinstance(briefing, dict)
     color = {
         "Healthy": VIRALFORGE_SUCCESS,
@@ -5081,13 +5545,27 @@ def operations_embed(summary: dict[str, object]) -> discord.Embed:
     )
     embed.add_field(name="Brand health", value=f"{health['state']} · {health['score']}/100")
     embed.add_field(name="Queue health", value=f"{queue['health']} · {queue['ready']} ready")
-    embed.add_field(name="Since yesterday", value=f"{briefing['videos_found']} found · {briefing['rendered']} rendered · {briefing['content_ready']} content-ready", inline=False)
+    embed.add_field(
+        name="Since yesterday",
+        value=f"{briefing['videos_found']} found · {briefing['rendered']} rendered · {briefing['content_ready']} content-ready",
+        inline=False,
+    )
+    if isinstance(autopilot, dict):
+        state = "paused" if autopilot.get("paused") else "active"
+        embed.add_field(
+            name="Automation",
+            value=f"{str(autopilot.get('level', 'MANUAL')).replace('_', ' ').title()} / {state}; {autopilot.get('scheduled', 0)} scheduled; {autopilot.get('exceptions', 0)} exceptions",
+        )
     tasks = summary["tasks"]
     if isinstance(tasks, list) and tasks:
-        embed.add_field(name="Tasks", value="\n".join(f"• {task.title}" for task in tasks), inline=False)
+        embed.add_field(
+            name="Tasks", value="\n".join(f"• {task.title}" for task in tasks), inline=False
+        )
     alerts = summary["alerts"]
     if isinstance(alerts, list) and alerts:
-        embed.add_field(name="Alerts", value="\n".join(f"• {alert.summary}" for alert in alerts), inline=False)
+        embed.add_field(
+            name="Alerts", value="\n".join(f"• {alert.summary}" for alert in alerts), inline=False
+        )
     embed.set_footer(text="Use /viralforge review for the next creative decision")
     return embed
 
@@ -5101,16 +5579,40 @@ def operations_report_embed(report: OperationsReport) -> discord.Embed:
         health = {}
     if not isinstance(queue, dict):
         queue = {}
-    title = "Morning Producer Briefing" if report.report_type == "MORNING_BRIEFING" else "Evening Operations Report"
-    embed = discord.Embed(title=title, description=f"Brand report for {report.local_date}.", color=VIRALFORGE_BLUE)
+    title = (
+        "Morning Producer Briefing"
+        if report.report_type == "MORNING_BRIEFING"
+        else "Evening Operations Report"
+    )
+    embed = discord.Embed(
+        title=title, description=f"Brand report for {report.local_date}.", color=VIRALFORGE_BLUE
+    )
     embed.add_field(name="Discovery", value=f"Videos found: {summary.get('videos_found', 0)}")
-    embed.add_field(name="Processing", value=f"Rendered: {summary.get('rendered', 0)}\nContent ready: {summary.get('content_ready', 0)}")
-    embed.add_field(name="Brand health", value=f"{health.get('state', 'Unknown')} · {health.get('score', '—')}/100")
+    embed.add_field(
+        name="Processing",
+        value=f"Rendered: {summary.get('rendered', 0)}\nContent ready: {summary.get('content_ready', 0)}",
+    )
+    embed.add_field(
+        name="Brand health",
+        value=f"{health.get('state', 'Unknown')} · {health.get('score', '—')}/100",
+    )
     if queue:
-        embed.add_field(name="Queue", value=f"{queue.get('health', 'Unknown')} · {queue.get('ready', 0)} ready", inline=False)
+        embed.add_field(
+            name="Queue",
+            value=f"{queue.get('health', 'Unknown')} · {queue.get('ready', 0)} ready",
+            inline=False,
+        )
     attention = summary.get("attention", [])
     if isinstance(attention, list) and attention:
-        embed.add_field(name="Attention required", value="\n".join(f"• {item.get('title', 'Review item')}" for item in attention if isinstance(item, dict)), inline=False)
+        embed.add_field(
+            name="Attention required",
+            value="\n".join(
+                f"• {item.get('title', 'Review item')}"
+                for item in attention
+                if isinstance(item, dict)
+            ),
+            inline=False,
+        )
     embed.set_footer(text="No content was published automatically.")
     return embed
 
@@ -5187,7 +5689,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             await interaction.response.send_message(
@@ -5201,7 +5705,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             items = await asyncio.to_thread(self.discovery_repository.discovery_queue)
@@ -5224,7 +5730,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             try:
@@ -5247,7 +5755,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             try:
@@ -5270,7 +5780,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             try:
@@ -5307,7 +5819,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             try:
@@ -5327,7 +5841,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             state = await asyncio.to_thread(self.repository.control_center)
@@ -5343,7 +5859,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             state = await asyncio.to_thread(self.repository.control_center)
@@ -5353,26 +5871,34 @@ class ViralForgeBot(discord.Client):
                 ephemeral=True,
             )
 
-        @group.command(name="operations", description="Show the selected brand's daily operations summary")
+        @group.command(
+            name="operations", description="Show the selected brand's daily operations summary"
+        )
         async def operations(interaction: discord.Interaction) -> None:
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             await asyncio.to_thread(self.repository.refresh_operations)
             summary = await asyncio.to_thread(self.repository.operations_summary)
             await interaction.response.send_message(embed=operations_embed(summary), ephemeral=True)
 
-        @group.command(name="review", description="Open the next item needing your creative decision")
+        @group.command(
+            name="review", description="Open the next item needing your creative decision"
+        )
         async def review(interaction: discord.Interaction) -> None:
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             source_review = await asyncio.to_thread(
@@ -5412,7 +5938,9 @@ class ViralForgeBot(discord.Client):
                     ephemeral=True,
                 )
                 return
-            await interaction.response.send_message("Nothing needs a creative decision right now.", ephemeral=True)
+            await interaction.response.send_message(
+                "Nothing needs a creative decision right now.", ephemeral=True
+            )
 
         @group.command(name="projects", description="List recent production projects")
         async def projects(interaction: discord.Interaction) -> None:
@@ -5420,7 +5948,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             projects = await asyncio.to_thread(self.repository.projects)
@@ -5438,7 +5968,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             brands = await asyncio.to_thread(self.repository.brands)
@@ -5456,13 +5988,17 @@ class ViralForgeBot(discord.Client):
                 ephemeral=True,
             )
 
-        @group.command(name="queue", description="Show content ready for the next publishing decision")
+        @group.command(
+            name="queue", description="Show content ready for the next publishing decision"
+        )
         async def queue(interaction: discord.Interaction) -> None:
             if not isinstance(interaction.user, discord.Member) or not is_authorized(
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             items = await asyncio.to_thread(self.repository.queue)
@@ -5487,7 +6023,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             try:
@@ -5529,7 +6067,9 @@ class ViralForgeBot(discord.Client):
                 interaction.user, self.settings
             ):
                 await interaction.response.send_message(
-                    unauthorized_message(), view=OperatorAccessHelpView(self.settings), ephemeral=True
+                    unauthorized_message(),
+                    view=OperatorAccessHelpView(self.settings),
+                    ephemeral=True,
                 )
                 return
             brand = await asyncio.to_thread(self.repository.default_brand)
@@ -5559,7 +6099,11 @@ class ViralForgeBot(discord.Client):
 
     async def on_message(self, message: discord.Message) -> None:
         """Apply deterministic, redacted safety checks without retaining message bodies."""
-        if message.guild is None or message.author.bot or not isinstance(message.author, discord.Member):
+        if (
+            message.guild is None
+            or message.author.bot
+            or not isinstance(message.author, discord.Member)
+        ):
             return
         if is_business_staff(message.author):
             return
@@ -5571,7 +6115,9 @@ class ViralForgeBot(discord.Client):
             config["automod"]["rules"]["repeated_message"]["repeats"] - 1
         )
         self._automod_recent[cache_key] = self._automod_recent.get(cache_key, 0) + 1
-        finding = scan_message(message.content, mention_count=len(message.mentions), repeated=repeated)
+        finding = scan_message(
+            message.content, mention_count=len(message.mentions), repeated=repeated
+        )
         if finding is None:
             return
         if finding.rule_key == "discord_invite" and channel_key in set(
@@ -5589,7 +6135,9 @@ class ViralForgeBot(discord.Client):
                 return
         session = next(get_session())
         try:
-            case = OperationsRepository().create_case(session, message.guild.id, message.author.id, finding)
+            case = OperationsRepository().create_case(
+                session, message.guild.id, message.author.id, finding
+            )
             session.commit()
             case_number = case.case_number
         except Exception:
@@ -5604,7 +6152,9 @@ class ViralForgeBot(discord.Client):
             )
         session = next(get_session())
         try:
-            channel_id = BusinessRepository().resource_id(session, message.guild.id, "channel", "operator_alerts")
+            channel_id = BusinessRepository().resource_id(
+                session, message.guild.id, "channel", "operator_alerts"
+            )
         finally:
             session.close()
         if channel_id:
@@ -5613,7 +6163,9 @@ class ViralForgeBot(discord.Client):
                 await channel.send(
                     f"Automod case #{case_number}: {finding.rule_key}; action {'deleted' if deleted else 'review'}; "
                     f"member {message.author.mention}. Evidence is redacted.",
-                    allowed_mentions=discord.AllowedMentions(users=True, roles=False, everyone=False),
+                    allowed_mentions=discord.AllowedMentions(
+                        users=True, roles=False, everyone=False
+                    ),
                 )
 
     async def _rotate_business_presence(self) -> None:

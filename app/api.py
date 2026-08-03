@@ -50,6 +50,35 @@ from app.analytics.service import (
     dashboard as analytics_dashboard,
 )
 from app.audit.models import AuditEvent
+from app.autopilot.models import (
+    AutopilotDecision,
+    AutopilotException,
+    AutopilotScheduleSlot,
+)
+from app.autopilot.service import (
+    automation_summary,
+)
+from app.autopilot.service import (
+    decide as autopilot_decide,
+)
+from app.autopilot.service import (
+    global_control as autopilot_global_control,
+)
+from app.autopilot.service import (
+    policy_for as autopilot_policy_for,
+)
+from app.autopilot.service import (
+    rank_queue as autopilot_rank_queue,
+)
+from app.autopilot.service import (
+    reserve_slot as autopilot_reserve_slot,
+)
+from app.autopilot.service import (
+    set_global_control as set_autopilot_global_control,
+)
+from app.autopilot.service import (
+    update_policy as update_autopilot_policy,
+)
 from app.brands.models import (
     Brand,
     BrandMembership,
@@ -993,6 +1022,36 @@ class ContentProfileRead(ContentProfilePatch):
     model_config = {"from_attributes": True}
 
 
+class AutopilotPolicyUpdate(BaseModel):
+    expected_version: int = Field(ge=1)
+    config_json: dict[str, object] = Field(default_factory=dict)
+    automation_level: str | None = Field(default=None, max_length=32)
+    paused: bool | None = None
+
+
+class AutopilotDecisionPreview(BaseModel):
+    action: str = Field(min_length=1, max_length=64)
+    object_type: str = Field(min_length=1, max_length=100)
+    object_id: str = Field(min_length=1, max_length=64)
+    evidence: dict[str, object] = Field(default_factory=dict)
+
+
+class AutopilotScheduleCreate(BaseModel):
+    expected_policy_version: int = Field(ge=1)
+    queue_item_id: uuid.UUID
+    destination_account_id: uuid.UUID
+    content_package_id: uuid.UUID
+    scheduled_for: str = Field(min_length=10, max_length=64)
+
+
+class AutopilotEmergencyUpdate(BaseModel):
+    expected_version: int = Field(ge=1)
+    emergency_stop: bool | None = None
+    discovery_paused: bool | None = None
+    processing_paused: bool | None = None
+    publishing_paused: bool | None = None
+
+
 class SourceAccountCreate(BaseModel):
     provider: str = Field(min_length=1, max_length=50)
     account_reference: str = Field(min_length=1, max_length=500)
@@ -1237,6 +1296,7 @@ def create_app() -> FastAPI:
             get_settings().require_trusted_https_feature()
         except ValueError as error:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error)) from error
+
     if settings.trusted_host_list():
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.trusted_host_list())
     if settings.cors_origin_list():
@@ -2839,14 +2899,30 @@ def create_app() -> FastAPI:
         actor: Annotated[Actor, Depends(development_actor)],
         session: Annotated[Session, Depends(get_session)],
     ) -> list[ProducerRecommendation]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         project = session.get(ProductionProject, project_id)
         if project is None:
             raise HTTPException(status_code=404, detail="production project not found")
         require_record_brand(session, actor, project)
-        return list(session.scalars(select(ProducerRecommendation).where(ProducerRecommendation.project_id == project.id).order_by(ProducerRecommendation.created_at.desc())))
+        return list(
+            session.scalars(
+                select(ProducerRecommendation)
+                .where(ProducerRecommendation.project_id == project.id)
+                .order_by(ProducerRecommendation.created_at.desc())
+            )
+        )
 
-    @app.post("/api/v1/producer/recommendations/{recommendation_id}/approve", response_model=ProducerRecommendationRead)
+    @app.post(
+        "/api/v1/producer/recommendations/{recommendation_id}/approve",
+        response_model=ProducerRecommendationRead,
+    )
     def approve_producer_recommendation(
         recommendation_id: uuid.UUID,
         payload: ProducerDecisionRequest,
@@ -2858,9 +2934,20 @@ def create_app() -> FastAPI:
         if recommendation is None:
             raise HTTPException(status_code=404, detail="producer recommendation not found")
         require_record_brand(session, actor, recommendation)
-        return decide_recommendation(session, actor.id, recommendation, payload.expected_version, True, payload.operator_edit_json, payload.reason)
+        return decide_recommendation(
+            session,
+            actor.id,
+            recommendation,
+            payload.expected_version,
+            True,
+            payload.operator_edit_json,
+            payload.reason,
+        )
 
-    @app.patch("/api/v1/producer/recommendations/{recommendation_id}", response_model=ProducerRecommendationRead)
+    @app.patch(
+        "/api/v1/producer/recommendations/{recommendation_id}",
+        response_model=ProducerRecommendationRead,
+    )
     def edit_producer_recommendation(
         recommendation_id: uuid.UUID,
         payload: ProducerDecisionRequest,
@@ -2872,9 +2959,14 @@ def create_app() -> FastAPI:
         if recommendation is None:
             raise HTTPException(status_code=404, detail="producer recommendation not found")
         require_record_brand(session, actor, recommendation)
-        return edit_recommendation(session, actor.id, recommendation, payload.expected_version, payload.operator_edit_json)
+        return edit_recommendation(
+            session, actor.id, recommendation, payload.expected_version, payload.operator_edit_json
+        )
 
-    @app.post("/api/v1/producer/recommendations/{recommendation_id}/reject", response_model=ProducerRecommendationRead)
+    @app.post(
+        "/api/v1/producer/recommendations/{recommendation_id}/reject",
+        response_model=ProducerRecommendationRead,
+    )
     def reject_producer_recommendation(
         recommendation_id: uuid.UUID,
         payload: ProducerDecisionRequest,
@@ -2886,7 +2978,15 @@ def create_app() -> FastAPI:
         if recommendation is None:
             raise HTTPException(status_code=404, detail="producer recommendation not found")
         require_record_brand(session, actor, recommendation)
-        return decide_recommendation(session, actor.id, recommendation, payload.expected_version, False, payload.operator_edit_json, payload.reason)
+        return decide_recommendation(
+            session,
+            actor.id,
+            recommendation,
+            payload.expected_version,
+            False,
+            payload.operator_edit_json,
+            payload.reason,
+        )
 
     @app.post(
         "/api/v1/production/clips/{clip_id}/producer/quality-report",
@@ -2907,20 +3007,40 @@ def create_app() -> FastAPI:
         generate_clip_recommendations(session, actor.id, clip)
         return report
 
-    @app.get("/api/v1/production/clips/{clip_id}/producer/quality-reports", response_model=list[ClipQualityReportRead])
+    @app.get(
+        "/api/v1/production/clips/{clip_id}/producer/quality-reports",
+        response_model=list[ClipQualityReportRead],
+    )
     def list_quality_reports_for_clip(
         clip_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
         session: Annotated[Session, Depends(get_session)],
     ) -> list[ClipQualityReport]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         clip = session.get(ProductionClip, clip_id)
         if clip is None:
             raise HTTPException(status_code=404, detail="production clip not found")
         require_record_brand(session, actor, clip)
-        return list(session.scalars(select(ClipQualityReport).where(ClipQualityReport.clip_id == clip.id).order_by(ClipQualityReport.report_version.desc())))
+        return list(
+            session.scalars(
+                select(ClipQualityReport)
+                .where(ClipQualityReport.clip_id == clip.id)
+                .order_by(ClipQualityReport.report_version.desc())
+            )
+        )
 
-    @app.post("/api/v1/production/clips/{clip_id}/media-quality", response_model=RenderedMediaInspectionRead, status_code=status.HTTP_202_ACCEPTED)
+    @app.post(
+        "/api/v1/production/clips/{clip_id}/media-quality",
+        response_model=RenderedMediaInspectionRead,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
     def request_rendered_media_quality(
         clip_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -2931,13 +3051,20 @@ def create_app() -> FastAPI:
         if clip is None:
             raise HTTPException(status_code=404, detail="production clip not found")
         require_record_brand(session, actor, clip)
-        item = request_inspection(session, actor.id, clip, LocalFilesystemStorage(Path(get_settings().local_storage_root)))
+        item = request_inspection(
+            session, actor.id, clip, LocalFilesystemStorage(Path(get_settings().local_storage_root))
+        )
         if item.status == "QUEUED":
             from app.worker import inspect_rendered_media
+
             inspect_rendered_media.delay(str(clip.id))
         return item
 
-    @app.post("/api/v1/production/clips/{clip_id}/media-quality/rerun", response_model=RenderedMediaInspectionRead, status_code=status.HTTP_202_ACCEPTED)
+    @app.post(
+        "/api/v1/production/clips/{clip_id}/media-quality/rerun",
+        response_model=RenderedMediaInspectionRead,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
     def rerun_rendered_media_quality(
         clip_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -2948,42 +3075,83 @@ def create_app() -> FastAPI:
         if clip is None:
             raise HTTPException(status_code=404, detail="production clip not found")
         require_record_brand(session, actor, clip)
-        item = request_inspection(session, actor.id, clip, LocalFilesystemStorage(Path(get_settings().local_storage_root)), rerun=True)
+        item = request_inspection(
+            session,
+            actor.id,
+            clip,
+            LocalFilesystemStorage(Path(get_settings().local_storage_root)),
+            rerun=True,
+        )
         from app.worker import inspect_rendered_media
+
         inspect_rendered_media.delay(str(clip.id), rerun=False)
         return item
 
-    @app.get("/api/v1/production/clips/{clip_id}/media-quality/latest", response_model=RenderedMediaInspectionRead)
+    @app.get(
+        "/api/v1/production/clips/{clip_id}/media-quality/latest",
+        response_model=RenderedMediaInspectionRead,
+    )
     def latest_rendered_media_quality(
         clip_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
         session: Annotated[Session, Depends(get_session)],
     ) -> RenderedMediaInspection:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         clip = session.get(ProductionClip, clip_id)
         if clip is None:
             raise HTTPException(status_code=404, detail="production clip not found")
         require_record_brand(session, actor, clip)
-        item = session.scalar(select(RenderedMediaInspection).where(RenderedMediaInspection.clip_id == clip.id).order_by(RenderedMediaInspection.inspection_version.desc()))
+        item = session.scalar(
+            select(RenderedMediaInspection)
+            .where(RenderedMediaInspection.clip_id == clip.id)
+            .order_by(RenderedMediaInspection.inspection_version.desc())
+        )
         if item is None:
             raise HTTPException(status_code=404, detail="rendered-media inspection not found")
         return item
 
-    @app.get("/api/v1/production/clips/{clip_id}/media-quality", response_model=list[RenderedMediaInspectionRead])
+    @app.get(
+        "/api/v1/production/clips/{clip_id}/media-quality",
+        response_model=list[RenderedMediaInspectionRead],
+    )
     def list_rendered_media_quality(
         clip_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
         session: Annotated[Session, Depends(get_session)],
         limit: int = Query(default=20, ge=1, le=100),
     ) -> list[RenderedMediaInspection]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         clip = session.get(ProductionClip, clip_id)
         if clip is None:
             raise HTTPException(status_code=404, detail="production clip not found")
         require_record_brand(session, actor, clip)
-        return list(session.scalars(select(RenderedMediaInspection).where(RenderedMediaInspection.clip_id == clip.id).order_by(RenderedMediaInspection.inspection_version.desc()).limit(limit)))
+        return list(
+            session.scalars(
+                select(RenderedMediaInspection)
+                .where(RenderedMediaInspection.clip_id == clip.id)
+                .order_by(RenderedMediaInspection.inspection_version.desc())
+                .limit(limit)
+            )
+        )
 
-    @app.get("/api/v1/media-quality/{inspection_id}/issues", response_model=list[RenderedMediaInspectionIssueRead])
+    @app.get(
+        "/api/v1/media-quality/{inspection_id}/issues",
+        response_model=list[RenderedMediaInspectionIssueRead],
+    )
     def list_rendered_media_issues(
         inspection_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -2994,9 +3162,22 @@ def create_app() -> FastAPI:
         if item is None:
             raise HTTPException(status_code=404, detail="rendered-media inspection not found")
         require_record_brand(session, actor, item)
-        return list(session.scalars(select(RenderedMediaInspectionIssue).where(RenderedMediaInspectionIssue.inspection_id == item.id).order_by(RenderedMediaInspectionIssue.start_seconds, RenderedMediaInspectionIssue.created_at).limit(limit)))
+        return list(
+            session.scalars(
+                select(RenderedMediaInspectionIssue)
+                .where(RenderedMediaInspectionIssue.inspection_id == item.id)
+                .order_by(
+                    RenderedMediaInspectionIssue.start_seconds,
+                    RenderedMediaInspectionIssue.created_at,
+                )
+                .limit(limit)
+            )
+        )
 
-    @app.get("/api/v1/media-quality/{inspection_id}/issues/{issue_id}", response_model=RenderedMediaInspectionIssueRead)
+    @app.get(
+        "/api/v1/media-quality/{inspection_id}/issues/{issue_id}",
+        response_model=RenderedMediaInspectionIssueRead,
+    )
     def get_rendered_media_issue(
         inspection_id: uuid.UUID,
         issue_id: uuid.UUID,
@@ -3020,10 +3201,35 @@ def create_app() -> FastAPI:
         if item is None:
             raise HTTPException(status_code=404, detail="rendered-media inspection not found")
         require_record_brand(session, actor, item)
-        issues = list(session.scalars(select(RenderedMediaInspectionIssue).where(RenderedMediaInspectionIssue.inspection_id == item.id).order_by(RenderedMediaInspectionIssue.start_seconds).limit(100)))
-        return {"inspection_version": item.inspection_version, "status": item.status, "stages": {"current": item.current_stage, "progress_percent": item.progress_percent}, "events": [{"issue_type": issue.issue_type, "severity": issue.severity, "start_seconds": issue.start_seconds, "end_seconds": issue.end_seconds, "confidence": issue.confidence} for issue in issues]}
+        issues = list(
+            session.scalars(
+                select(RenderedMediaInspectionIssue)
+                .where(RenderedMediaInspectionIssue.inspection_id == item.id)
+                .order_by(RenderedMediaInspectionIssue.start_seconds)
+                .limit(100)
+            )
+        )
+        return {
+            "inspection_version": item.inspection_version,
+            "status": item.status,
+            "stages": {"current": item.current_stage, "progress_percent": item.progress_percent},
+            "events": [
+                {
+                    "issue_type": issue.issue_type,
+                    "severity": issue.severity,
+                    "start_seconds": issue.start_seconds,
+                    "end_seconds": issue.end_seconds,
+                    "confidence": issue.confidence,
+                }
+                for issue in issues
+            ],
+        }
 
-    @app.post("/api/v1/production/clips/{clip_id}/correction-plans", response_model=CorrectionPlanRead, status_code=status.HTTP_201_CREATED)
+    @app.post(
+        "/api/v1/production/clips/{clip_id}/correction-plans",
+        response_model=CorrectionPlanRead,
+        status_code=status.HTTP_201_CREATED,
+    )
     def create_clip_correction_plan(
         clip_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -3037,7 +3243,9 @@ def create_app() -> FastAPI:
         try:
             return create_correction_plan(session, actor.id, clip)
         except CorrectionError as exc:
-            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+            raise HTTPException(
+                status_code=409, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
 
     @app.get("/api/v1/correction-plans/{plan_id}", response_model=CorrectionPlanRead)
     def get_clip_correction_plan(
@@ -3051,7 +3259,10 @@ def create_app() -> FastAPI:
         require_record_brand(session, actor, plan)
         return plan
 
-    @app.get("/api/v1/production/clips/{clip_id}/correction-plans", response_model=list[CorrectionPlanRead])
+    @app.get(
+        "/api/v1/production/clips/{clip_id}/correction-plans",
+        response_model=list[CorrectionPlanRead],
+    )
     def list_clip_correction_plans(
         clip_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -3061,9 +3272,17 @@ def create_app() -> FastAPI:
         if clip is None:
             raise HTTPException(status_code=404, detail="production clip not found")
         require_record_brand(session, actor, clip)
-        return list(session.scalars(select(ClipCorrectionPlan).where(ClipCorrectionPlan.source_clip_id == clip.id).order_by(ClipCorrectionPlan.plan_version.desc())))
+        return list(
+            session.scalars(
+                select(ClipCorrectionPlan)
+                .where(ClipCorrectionPlan.source_clip_id == clip.id)
+                .order_by(ClipCorrectionPlan.plan_version.desc())
+            )
+        )
 
-    @app.get("/api/v1/correction-plans/{plan_id}/actions", response_model=list[CorrectionActionRead])
+    @app.get(
+        "/api/v1/correction-plans/{plan_id}/actions", response_model=list[CorrectionActionRead]
+    )
     def list_clip_correction_actions(
         plan_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -3075,7 +3294,9 @@ def create_app() -> FastAPI:
         require_record_brand(session, actor, plan)
         return correction_actions(session, plan)
 
-    @app.patch("/api/v1/correction-plans/{plan_id}/actions/{action_id}", response_model=CorrectionPlanRead)
+    @app.patch(
+        "/api/v1/correction-plans/{plan_id}/actions/{action_id}", response_model=CorrectionPlanRead
+    )
     def select_clip_correction_action(
         plan_id: uuid.UUID,
         action_id: uuid.UUID,
@@ -3089,9 +3310,13 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="correction plan not found")
         require_record_brand(session, actor, plan)
         try:
-            return set_correction_action_selected(session, actor.id, plan, action_id, payload.selected, payload.expected_version)
+            return set_correction_action_selected(
+                session, actor.id, plan, action_id, payload.selected, payload.expected_version
+            )
         except CorrectionError as exc:
-            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+            raise HTTPException(
+                status_code=409, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
 
     @app.post("/api/v1/correction-plans/{plan_id}/validate")
     def validate_clip_correction_plan(
@@ -3120,7 +3345,9 @@ def create_app() -> FastAPI:
         try:
             return submit_correction_plan(session, actor.id, plan, payload.expected_version)
         except CorrectionError as exc:
-            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+            raise HTTPException(
+                status_code=409, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
 
     @app.post("/api/v1/correction-plans/{plan_id}/confirm", response_model=CorrectionPlanRead)
     def confirm_clip_correction_plan(
@@ -3137,8 +3364,11 @@ def create_app() -> FastAPI:
         try:
             result = confirm_correction_plan(session, actor.id, plan, payload.expected_version)
         except CorrectionError as exc:
-            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+            raise HTTPException(
+                status_code=409, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
         from app.worker import render_corrected_clip
+
         render_corrected_clip.delay(str(result.id))
         return result
 
@@ -3156,7 +3386,9 @@ def create_app() -> FastAPI:
         try:
             return cancel_correction_plan(session, actor.id, plan, payload.expected_version)
         except CorrectionError as exc:
-            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+            raise HTTPException(
+                status_code=409, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
 
     @app.get("/api/v1/correction-plans/{plan_id}/comparison")
     def get_clip_correction_comparison(
@@ -3170,7 +3402,9 @@ def create_app() -> FastAPI:
         require_record_brand(session, actor, plan)
         return correction_comparison(session, plan)
 
-    @app.post("/api/v1/correction-plans/{plan_id}/select/{choice}", response_model=ProductionClipRead)
+    @app.post(
+        "/api/v1/correction-plans/{plan_id}/select/{choice}", response_model=ProductionClipRead
+    )
     def select_clip_correction_revision(
         plan_id: uuid.UUID,
         choice: str,
@@ -3185,11 +3419,17 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="correction plan not found")
         require_record_brand(session, actor, plan)
         try:
-            return select_correction_revision(session, actor.id, plan, choice == "revised", payload.expected_version)
+            return select_correction_revision(
+                session, actor.id, plan, choice == "revised", payload.expected_version
+            )
         except CorrectionError as exc:
-            raise HTTPException(status_code=409, detail={"code": exc.code, "message": str(exc)}) from exc
+            raise HTTPException(
+                status_code=409, detail={"code": exc.code, "message": str(exc)}
+            ) from exc
 
-    @app.post("/api/v1/media-quality/{inspection_id}/cancel", response_model=RenderedMediaInspectionRead)
+    @app.post(
+        "/api/v1/media-quality/{inspection_id}/cancel", response_model=RenderedMediaInspectionRead
+    )
     def cancel_rendered_media_quality(
         inspection_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -3202,7 +3442,9 @@ def create_app() -> FastAPI:
         require_record_brand(session, actor, item)
         return cancel_inspection(session, actor.id, item)
 
-    @app.patch("/api/v1/media-quality/{inspection_id}/note", response_model=RenderedMediaInspectionRead)
+    @app.patch(
+        "/api/v1/media-quality/{inspection_id}/note", response_model=RenderedMediaInspectionRead
+    )
     def note_rendered_media_quality(
         inspection_id: uuid.UUID,
         payload: RenderedMediaInspectionNoteRequest,
@@ -3213,9 +3455,13 @@ def create_app() -> FastAPI:
         if item is None:
             raise HTTPException(status_code=404, detail="rendered-media inspection not found")
         require_record_brand(session, actor, item)
-        return add_rendered_media_note(session, actor.id, item, payload.expected_version, payload.note)
+        return add_rendered_media_note(
+            session, actor.id, item, payload.expected_version, payload.note
+        )
 
-    @app.post("/api/v1/media-quality/{inspection_id}/approve", response_model=RenderedMediaInspectionRead)
+    @app.post(
+        "/api/v1/media-quality/{inspection_id}/approve", response_model=RenderedMediaInspectionRead
+    )
     def approve_rendered_media_advice(
         inspection_id: uuid.UUID,
         payload: RenderedMediaInspectionDecisionRequest,
@@ -3226,9 +3472,13 @@ def create_app() -> FastAPI:
         if item is None:
             raise HTTPException(status_code=404, detail="rendered-media inspection not found")
         require_record_brand(session, actor, item)
-        return review_inspection(session, actor.id, item, payload.expected_version, True, payload.reason)
+        return review_inspection(
+            session, actor.id, item, payload.expected_version, True, payload.reason
+        )
 
-    @app.post("/api/v1/media-quality/{inspection_id}/reject", response_model=RenderedMediaInspectionRead)
+    @app.post(
+        "/api/v1/media-quality/{inspection_id}/reject", response_model=RenderedMediaInspectionRead
+    )
     def reject_rendered_media_advice(
         inspection_id: uuid.UUID,
         payload: RenderedMediaInspectionDecisionRequest,
@@ -3239,7 +3489,9 @@ def create_app() -> FastAPI:
         if item is None:
             raise HTTPException(status_code=404, detail="rendered-media inspection not found")
         require_record_brand(session, actor, item)
-        return review_inspection(session, actor.id, item, payload.expected_version, False, payload.reason)
+        return review_inspection(
+            session, actor.id, item, payload.expected_version, False, payload.reason
+        )
 
     @app.post("/api/v1/production/clips/{clip_id}/approve", response_model=ProductionClipRead)
     def approve_production_clip(
@@ -3337,23 +3589,51 @@ def create_app() -> FastAPI:
                     consume_oauth_verifier(oauth_state)
                 except PublishingError:
                     pass
-            return JSONResponse(status_code=400, content={"status": "denied", "message": "TikTok authorization was not completed."})
+            return JSONResponse(
+                status_code=400,
+                content={"status": "denied", "message": "TikTok authorization was not completed."},
+            )
         if not state or not code:
-            return JSONResponse(status_code=400, content={"status": "invalid", "message": "TikTok callback is missing authorization data."})
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "invalid",
+                    "message": "TikTok callback is missing authorization data.",
+                },
+            )
         try:
             oauth_state = consume_oauth_state(session, state)
             verifier = consume_oauth_verifier(oauth_state)
             token_set = TikTokPublishingProvider().exchange_code(code, verifier)
             if not set(oauth_state.requested_scopes).issubset(token_set.scopes):
-                raise PublishingError("TIKTOK_REQUIRED_SCOPE_MISSING", "TikTok did not grant every required scope")
+                raise PublishingError(
+                    "TIKTOK_REQUIRED_SCOPE_MISSING", "TikTok did not grant every required scope"
+                )
         except PublishingError as exc:
-            return JSONResponse(status_code=400, content={"status": "failed", "code": exc.code, "message": exc.message})
+            return JSONResponse(
+                status_code=400,
+                content={"status": "failed", "code": exc.code, "message": exc.message},
+            )
         account = session.get(DestinationAccount, oauth_state.destination_account_id)
         if account is None or account.brand_id != oauth_state.brand_id:
-            return JSONResponse(status_code=400, content={"status": "failed", "code": "TIKTOK_OAUTH_DESTINATION_INVALID", "message": "TikTok authorization destination is unavailable."})
-        connection = session.scalar(select(PublishingAccountConnection).where(PublishingAccountConnection.destination_account_id == oauth_state.destination_account_id))
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "failed",
+                    "code": "TIKTOK_OAUTH_DESTINATION_INVALID",
+                    "message": "TikTok authorization destination is unavailable.",
+                },
+            )
+        connection = session.scalar(
+            select(PublishingAccountConnection).where(
+                PublishingAccountConnection.destination_account_id
+                == oauth_state.destination_account_id
+            )
+        )
         if connection is None:
-            connection = PublishingAccountConnection(destination_account_id=oauth_state.destination_account_id)
+            connection = PublishingAccountConnection(
+                destination_account_id=oauth_state.destination_account_id
+            )
         try:
             store = credential_store(get_settings())
             credential_reference = store.create(token_set.payload(), namespace="tiktok")
@@ -3367,7 +3647,10 @@ def create_app() -> FastAPI:
             connection.checked_at = datetime.now(UTC).isoformat()
             session.add(connection)
             session.commit()
-            return JSONResponse(status_code=400, content={"status": "failed", "code": exc.code, "message": exc.message})
+            return JSONResponse(
+                status_code=400,
+                content={"status": "failed", "code": exc.code, "message": exc.message},
+            )
         connection.connection_state = "CONNECTED"
         connection.provider_account_id, connection.provider_channel_url = identity, channel_url
         connection.granted_scopes = sorted(token_set.scopes)
@@ -3376,11 +3659,30 @@ def create_app() -> FastAPI:
         connection.last_error_category, connection.last_error_summary = None, None
         session.add(connection)
         session.add(account)
-        session.add(AuditEvent(entity_type="destination_account", entity_id=oauth_state.destination_account_id, brand_id=oauth_state.brand_id, event_name="tiktok.oauth.connected", payload={"scopes": sorted(token_set.scopes)}))
+        session.add(
+            AuditEvent(
+                entity_type="destination_account",
+                entity_id=oauth_state.destination_account_id,
+                brand_id=oauth_state.brand_id,
+                event_name="tiktok.oauth.connected",
+                payload={"scopes": sorted(token_set.scopes)},
+            )
+        )
         session.commit()
-        return JSONResponse(status_code=200, content={"status": "connected", "destination_account_id": str(oauth_state.destination_account_id), "granted_scopes": sorted(token_set.scopes), "message": "TikTok account connected securely."})
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "connected",
+                "destination_account_id": str(oauth_state.destination_account_id),
+                "granted_scopes": sorted(token_set.scopes),
+                "message": "TikTok account connected securely.",
+            },
+        )
 
-    @app.get("/api/v1/publishing/tiktok/destination-accounts/{account_id}/status", response_model=TikTokConnectionStatusRead)
+    @app.get(
+        "/api/v1/publishing/tiktok/destination-accounts/{account_id}/status",
+        response_model=TikTokConnectionStatusRead,
+    )
     def tiktok_connection_status(
         account_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -3390,12 +3692,28 @@ def create_app() -> FastAPI:
         if account is None:
             raise HTTPException(status_code=404, detail="destination account not found")
         require_record_brand(session, actor, account)
-        connection = session.scalar(select(PublishingAccountConnection).where(PublishingAccountConnection.destination_account_id == account.id))
+        connection = session.scalar(
+            select(PublishingAccountConnection).where(
+                PublishingAccountConnection.destination_account_id == account.id
+            )
+        )
         if connection is None:
             raise HTTPException(status_code=404, detail="TikTok connection not found")
-        return TikTokConnectionStatusRead.model_validate({**{field: getattr(connection, field) for field in DestinationConnectionRead.model_fields}, "granted_scopes": connection.granted_scopes, "application_review_state": get_settings().tiktok_application_review_state})
+        return TikTokConnectionStatusRead.model_validate(
+            {
+                **{
+                    field: getattr(connection, field)
+                    for field in DestinationConnectionRead.model_fields
+                },
+                "granted_scopes": connection.granted_scopes,
+                "application_review_state": get_settings().tiktok_application_review_state,
+            }
+        )
 
-    @app.post("/api/v1/publishing/tiktok/destination-accounts/{account_id}/capabilities", response_model=TikTokCapabilityRead)
+    @app.post(
+        "/api/v1/publishing/tiktok/destination-accounts/{account_id}/capabilities",
+        response_model=TikTokCapabilityRead,
+    )
     def query_tiktok_capabilities(
         account_id: uuid.UUID,
         actor: Annotated[Actor, Depends(development_actor)],
@@ -3409,7 +3727,9 @@ def create_app() -> FastAPI:
         require_record_brand(session, actor, account)
         if account.provider.upper() != "TIKTOK":
             raise HTTPException(status_code=409, detail="TikTok destination account required")
-        return persist_capabilities(session, account, TikTokPublishingProvider().creator_info(account))
+        return persist_capabilities(
+            session, account, TikTokPublishingProvider().creator_info(account)
+        )
 
     @app.post(
         "/api/v1/publishing/tiktok/destination-accounts/{account_id}/refresh",
@@ -3445,27 +3765,66 @@ def create_app() -> FastAPI:
         require_record_brand(session, actor, account)
         return disconnect_tiktok_connection(session, actor.id, account)
 
-    def _create_tiktok_request(payload: TikTokPublishRequestCreate, mode: str, actor: Actor, session: Session) -> PublishRequest:
+    def _create_tiktok_request(
+        payload: TikTokPublishRequestCreate, mode: str, actor: Actor, session: Session
+    ) -> PublishRequest:
         require_trusted_https_feature()
         require_role(actor, RoleName.OWNER, RoleName.ADMIN)
-        clip, package, destination = session.get(ProductionClip, payload.clip_id), session.get(ContentPackage, payload.content_package_id), session.get(DestinationAccount, payload.destination_account_id)
+        clip, package, destination = (
+            session.get(ProductionClip, payload.clip_id),
+            session.get(ContentPackage, payload.content_package_id),
+            session.get(DestinationAccount, payload.destination_account_id),
+        )
         if clip is None or package is None or destination is None:
-            raise HTTPException(status_code=404, detail="clip, content package, or destination account not found")
+            raise HTTPException(
+                status_code=404, detail="clip, content package, or destination account not found"
+            )
         require_record_brand(session, actor, clip)
         require_record_brand(session, actor, package)
         require_record_brand(session, actor, destination)
-        return request_tiktok_publish(session, actor.id, clip, package, destination, payload.idempotency_key, mode, payload.privacy_level)
+        return request_tiktok_publish(
+            session,
+            actor.id,
+            clip,
+            package,
+            destination,
+            payload.idempotency_key,
+            mode,
+            payload.privacy_level,
+        )
 
-    @app.post("/api/v1/publishing/tiktok/requests/draft", response_model=PublishRequestRead, status_code=status.HTTP_201_CREATED)
-    def create_tiktok_draft_request(payload: TikTokPublishRequestCreate, actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)]) -> PublishRequest:
+    @app.post(
+        "/api/v1/publishing/tiktok/requests/draft",
+        response_model=PublishRequestRead,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_tiktok_draft_request(
+        payload: TikTokPublishRequestCreate,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> PublishRequest:
         return _create_tiktok_request(payload, "DRAFT_UPLOAD", actor, session)
 
-    @app.post("/api/v1/publishing/tiktok/requests/direct", response_model=PublishRequestRead, status_code=status.HTTP_201_CREATED)
-    def create_tiktok_direct_request(payload: TikTokPublishRequestCreate, actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)]) -> PublishRequest:
+    @app.post(
+        "/api/v1/publishing/tiktok/requests/direct",
+        response_model=PublishRequestRead,
+        status_code=status.HTTP_201_CREATED,
+    )
+    def create_tiktok_direct_request(
+        payload: TikTokPublishRequestCreate,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> PublishRequest:
         return _create_tiktok_request(payload, "DIRECT_POST", actor, session)
 
-    @app.post("/api/v1/publishing/tiktok/requests/{request_id}/confirm", response_model=PublishRequestRead)
-    def confirm_tiktok_request(request_id: uuid.UUID, actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)]) -> PublishRequest:
+    @app.post(
+        "/api/v1/publishing/tiktok/requests/{request_id}/confirm", response_model=PublishRequestRead
+    )
+    def confirm_tiktok_request(
+        request_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> PublishRequest:
         request = session.get(PublishRequest, request_id)
         if request is None:
             raise HTTPException(status_code=404, detail="publishing request not found")
@@ -3475,19 +3834,37 @@ def create_app() -> FastAPI:
         confirmed = confirm_publish(session, actor.id, request)
         if confirmed.status == "QUEUED":
             from app.worker import celery_app
-            celery_app.send_task("viralforge.execute_tiktok_publish_request", args=[str(confirmed.id)])
+
+            celery_app.send_task(
+                "viralforge.execute_tiktok_publish_request", args=[str(confirmed.id)]
+            )
         return confirmed
 
-    @app.post("/api/v1/publishing/tiktok/requests/{request_id}/refresh", response_model=PublishRequestRead)
-    def refresh_tiktok_request(request_id: uuid.UUID, actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)]) -> PublishRequest:
+    @app.post(
+        "/api/v1/publishing/tiktok/requests/{request_id}/refresh", response_model=PublishRequestRead
+    )
+    def refresh_tiktok_request(
+        request_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> PublishRequest:
         request = session.get(PublishRequest, request_id)
         if request is None:
             raise HTTPException(status_code=404, detail="publishing request not found")
         require_record_brand(session, actor, request)
         return refresh_tiktok_status(session, request.id)
 
-    @app.post("/api/v1/publishing/tiktok/requests/{request_id}/draft-completion/{outcome}", response_model=PublishRequestRead)
-    def complete_tiktok_draft_request(request_id: uuid.UUID, outcome: str, post_url: str | None = None, actor: Annotated[Actor, Depends(development_actor)] = None, session: Annotated[Session, Depends(get_session)] = None) -> PublishRequest:  # type: ignore[assignment]
+    @app.post(
+        "/api/v1/publishing/tiktok/requests/{request_id}/draft-completion/{outcome}",
+        response_model=PublishRequestRead,
+    )
+    def complete_tiktok_draft_request(
+        request_id: uuid.UUID,
+        outcome: str,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        post_url: str | None = None,
+    ) -> PublishRequest:
         request = session.get(PublishRequest, request_id)
         if request is None:
             raise HTTPException(status_code=404, detail="publishing request not found")
@@ -3698,19 +4075,38 @@ def create_app() -> FastAPI:
         session: Annotated[Session, Depends(get_session)],
         brand_id: uuid.UUID | None = None,
     ) -> dict[str, object]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
         result = operations_briefing(session, brand.id)
         result["brand"] = brand.name
         attention = cast(list[OperatorTask], result["attention"])
-        result["attention"] = [{"title": item.title, "priority": item.priority, "action": item.action_label} for item in attention]
+        result["attention"] = [
+            {"title": item.title, "priority": item.priority, "action": item.action_label}
+            for item in attention
+        ]
         return result
 
     @app.get("/api/v1/operations/health", response_model=dict[str, object])
     def get_operations_health(
-        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
     ) -> dict[str, object]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
         return operations_health_summary(session, brand.id)
 
@@ -3720,53 +4116,467 @@ def create_app() -> FastAPI:
         session: Annotated[Session, Depends(get_session)],
         brand_id: uuid.UUID | None = None,
     ) -> dict[str, object]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
         result = operations_evening_report(session, brand.id)
         result["brand"] = brand.name
         attention = cast(list[OperatorTask], result["attention"])
-        result["attention"] = [{"title": item.title, "priority": item.priority, "action": item.action_label} for item in attention]
+        result["attention"] = [
+            {"title": item.title, "priority": item.priority, "action": item.action_label}
+            for item in attention
+        ]
         return result
 
     @app.get("/api/v1/operations/queue", response_model=dict[str, object])
     def get_operations_queue(
-        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
     ) -> dict[str, object]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
         return operations_queue_metrics(session, brand.id)
 
     @app.get("/api/v1/operations/tasks", response_model=list[dict[str, object]])
     def get_operator_tasks(
-        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
     ) -> list[dict[str, object]]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
-        return [{"title": item.title, "priority": item.priority, "reason": item.reason, "action": item.action_label} for item in session.scalars(select(OperatorTask).where(OperatorTask.brand_id == brand.id, OperatorTask.status == "OPEN").order_by(OperatorTask.priority.desc()).limit(25))]
+        return [
+            {
+                "title": item.title,
+                "priority": item.priority,
+                "reason": item.reason,
+                "action": item.action_label,
+            }
+            for item in session.scalars(
+                select(OperatorTask)
+                .where(OperatorTask.brand_id == brand.id, OperatorTask.status == "OPEN")
+                .order_by(OperatorTask.priority.desc())
+                .limit(25)
+            )
+        ]
 
     @app.get("/api/v1/operations/alerts", response_model=list[dict[str, object]])
     def get_operations_alerts(
-        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
     ) -> list[dict[str, object]]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
-        return [{"severity": item.severity, "category": item.category, "summary": item.summary, "occurrences": item.occurrences} for item in session.scalars(select(OperationsAlert).where(OperationsAlert.brand_id == brand.id, OperationsAlert.status == "OPEN").order_by(OperationsAlert.last_seen_at.desc()).limit(25))]
+        return [
+            {
+                "severity": item.severity,
+                "category": item.category,
+                "summary": item.summary,
+                "occurrences": item.occurrences,
+            }
+            for item in session.scalars(
+                select(OperationsAlert)
+                .where(OperationsAlert.brand_id == brand.id, OperationsAlert.status == "OPEN")
+                .order_by(OperationsAlert.last_seen_at.desc())
+                .limit(25)
+            )
+        ]
 
     @app.get("/api/v1/operations/timeline", response_model=list[dict[str, object]])
     def get_operations_timeline(
-        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
     ) -> list[dict[str, object]]:
-        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.VIEWER)
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
         return operations_timeline(session, brand.id)
 
     @app.post("/api/v1/operations/refresh", response_model=dict[str, object])
     def refresh_operations(
-        actor: Annotated[Actor, Depends(development_actor)], session: Annotated[Session, Depends(get_session)], brand_id: uuid.UUID | None = None,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
     ) -> dict[str, object]:
         require_role(actor, RoleName.OWNER, RoleName.ADMIN)
         brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
         return refresh_operational_state(session, brand.id)
+
+    @app.get("/api/v1/autopilot/policy", response_model=dict[str, object])
+    def get_autopilot_policy(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        policy = autopilot_policy_for(session, brand.id, create=True)
+        assert policy is not None
+        session.commit()
+        return {
+            "brand": brand.name,
+            "id": str(policy.id),
+            "automation_level": policy.automation_level,
+            "version": policy.version,
+            "paused": policy.is_paused,
+            "config": policy.config_json,
+            "automatic_actions": [
+                "none"
+                if policy.automation_level == "MANUAL"
+                else "policy-governed; final external publishing remains protected"
+            ],
+        }
+
+    @app.put("/api/v1/autopilot/policy", response_model=dict[str, object])
+    def put_autopilot_policy(
+        payload: AutopilotPolicyUpdate,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        try:
+            policy = update_autopilot_policy(
+                session,
+                brand.id,
+                actor.id,
+                payload.expected_version,
+                payload.config_json,
+                automation_level=payload.automation_level,
+                paused=payload.paused,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        return {
+            "id": str(policy.id),
+            "automation_level": policy.automation_level,
+            "version": policy.version,
+            "paused": policy.is_paused,
+            "config": policy.config_json,
+        }
+
+    @app.post("/api/v1/autopilot/preview", response_model=dict[str, object])
+    def preview_autopilot_policy(
+        payload: AutopilotDecisionPreview,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        result = autopilot_decide(
+            session,
+            brand.id,
+            payload.action,
+            payload.object_type,
+            payload.object_id,
+            evidence=payload.evidence,
+            correlation_key="api-preview",
+        )
+        return {
+            "decision": result.decision,
+            "policy_version": result.record.policy_version,
+            "reason_codes": result.record.reason_codes,
+            "explanation": result.record.explanation,
+            "missing_evidence": result.record.missing_evidence,
+        }
+
+    @app.post("/api/v1/autopilot/pause", response_model=dict[str, object])
+    def pause_autopilot_brand(
+        payload: AutopilotPolicyUpdate,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        policy = update_autopilot_policy(
+            session,
+            brand.id,
+            actor.id,
+            payload.expected_version,
+            payload.config_json,
+            automation_level=payload.automation_level,
+            paused=True,
+        )
+        return {"paused": policy.is_paused, "version": policy.version}
+
+    @app.post("/api/v1/autopilot/resume", response_model=dict[str, object])
+    def resume_autopilot_brand(
+        payload: AutopilotPolicyUpdate,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        policy = update_autopilot_policy(
+            session,
+            brand.id,
+            actor.id,
+            payload.expected_version,
+            payload.config_json,
+            automation_level=payload.automation_level,
+            paused=False,
+        )
+        return {"paused": policy.is_paused, "version": policy.version}
+
+    @app.get("/api/v1/autopilot/decisions", response_model=list[dict[str, object]])
+    def list_autopilot_decisions(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> list[dict[str, object]]:
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return [
+            {
+                "action": item.action,
+                "decision": item.decision,
+                "object_type": item.object_type,
+                "object_id": item.object_id,
+                "reason_codes": item.reason_codes,
+                "explanation": item.explanation,
+                "policy_version": item.policy_version,
+                "created_at": item.created_at.isoformat(),
+            }
+            for item in session.scalars(
+                select(AutopilotDecision)
+                .where(AutopilotDecision.brand_id == brand.id)
+                .order_by(AutopilotDecision.created_at.desc())
+                .limit(100)
+            )
+        ]
+
+    @app.get("/api/v1/autopilot/exceptions", response_model=list[dict[str, object]])
+    def list_autopilot_exceptions(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> list[dict[str, object]]:
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return [
+            {
+                "id": str(item.id),
+                "category": item.category,
+                "severity": item.severity,
+                "reason": item.reason,
+                "recommended_action": item.recommended_action,
+                "retry_state": item.retry_state,
+                "occurrences": item.occurrences,
+            }
+            for item in session.scalars(
+                select(AutopilotException)
+                .where(AutopilotException.brand_id == brand.id, AutopilotException.status == "OPEN")
+                .order_by(AutopilotException.created_at)
+                .limit(100)
+            )
+        ]
+
+    @app.post("/api/v1/autopilot/queue/rank", response_model=list[dict[str, object]])
+    def rank_autopilot_queue(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> list[dict[str, object]]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        rows = autopilot_rank_queue(session, brand.id)
+        return [
+            {
+                "queue_item_id": str(row.queue_item_id),
+                "score": row.rank_score,
+                "position": row.rank_position,
+                "explanation": row.explanation,
+            }
+            for row in rows
+        ]
+
+    @app.post("/api/v1/autopilot/schedule", response_model=dict[str, object])
+    def schedule_autopilot_content(
+        payload: AutopilotScheduleCreate,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        policy = autopilot_policy_for(session, brand.id, create=True)
+        if policy is None or policy.version != payload.expected_policy_version:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Policy version conflict; refresh before scheduling.",
+            )
+        try:
+            row = autopilot_reserve_slot(
+                session,
+                brand.id,
+                payload.queue_item_id,
+                payload.destination_account_id,
+                payload.content_package_id,
+                payload.scheduled_for,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        return {
+            "id": str(row.id),
+            "status": row.status,
+            "scheduled_for": row.scheduled_for,
+            "confirmation_required": row.confirmation_required,
+        }
+
+    @app.get("/api/v1/autopilot/schedule", response_model=list[dict[str, object]])
+    def list_autopilot_schedule(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> list[dict[str, object]]:
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return [
+            {
+                "id": str(item.id),
+                "queue_item_id": str(item.queue_item_id),
+                "scheduled_for": item.scheduled_for,
+                "status": item.status,
+                "confirmation_required": item.confirmation_required,
+                "provider_mode": item.provider_mode,
+                "privacy": item.privacy,
+            }
+            for item in session.scalars(
+                select(AutopilotScheduleSlot)
+                .where(AutopilotScheduleSlot.brand_id == brand.id)
+                .order_by(AutopilotScheduleSlot.scheduled_for)
+                .limit(100)
+            )
+        ]
+
+    @app.get("/api/v1/autopilot/health", response_model=dict[str, object])
+    def get_autopilot_health(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> dict[str, object]:
+        require_role(
+            actor,
+            RoleName.OWNER,
+            RoleName.ADMIN,
+            RoleName.EDITOR,
+            RoleName.REVIEWER,
+            RoleName.VIEWER,
+        )
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return automation_summary(session, brand.id)
+
+    @app.get("/api/v1/autopilot/emergency", response_model=dict[str, object])
+    def get_autopilot_emergency(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        control = autopilot_global_control(session, create=True)
+        assert control is not None
+        session.commit()
+        return {
+            "version": control.version,
+            "emergency_stop": control.emergency_stop,
+            "discovery_paused": control.discovery_paused,
+            "processing_paused": control.processing_paused,
+            "publishing_paused": control.publishing_paused,
+        }
+
+    @app.put("/api/v1/autopilot/emergency", response_model=dict[str, object])
+    def put_autopilot_emergency(
+        payload: AutopilotEmergencyUpdate,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN)
+        try:
+            control = set_autopilot_global_control(
+                session,
+                actor.id,
+                payload.expected_version,
+                emergency_stop=payload.emergency_stop,
+                discovery_paused=payload.discovery_paused,
+                processing_paused=payload.processing_paused,
+                publishing_paused=payload.publishing_paused,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+        return {
+            "version": control.version,
+            "emergency_stop": control.emergency_stop,
+            "discovery_paused": control.discovery_paused,
+            "processing_paused": control.processing_paused,
+            "publishing_paused": control.publishing_paused,
+        }
 
     @app.get("/api/v1/production/queue", response_model=list[ProductionQueueRead])
     def production_queue(

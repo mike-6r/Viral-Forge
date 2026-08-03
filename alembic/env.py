@@ -4,6 +4,7 @@ import app.accounts.models  # noqa: F401
 import app.analysis.models  # noqa: F401
 import app.analytics.models  # noqa: F401
 import app.audit.models  # noqa: F401
+import app.autopilot.models  # noqa: F401
 import app.brands.models  # noqa: F401
 import app.content.models  # noqa: F401
 import app.content_packages.models  # noqa: F401

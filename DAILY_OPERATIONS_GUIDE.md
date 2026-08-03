@@ -5,3 +5,5 @@ Each brand may set `operations_schedule_json` on its content profile. Supported 
 The scheduler checks brands every five minutes. Quiet, holiday, and pause periods suppress the operations refresh; they do not delete work or alter existing pipeline jobs. Discovery remains governed by the existing discovery scheduler and source polling intervals.
 
 Use `/viralforge operations` to inspect the selected brand. Use `/viralforge review` for the next creative decision. No operation screen publishes content.
+
+Autopilot briefings use persisted operations facts. They summarize automation state, queue/schedule condition, content requiring attention, and health; unavailable analytics remain unavailable rather than estimated.

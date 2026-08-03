@@ -19,3 +19,6 @@ TikTok is disabled by default. Do not enable it in the IP-bootstrap profile: tha
 ## Operations automation
 
 The scheduler runs `viralforge.refresh_operations_state` every five minutes. It assesses each active, non-paused brand and records grouped operator tasks and alerts. It does not send a provider upload, create a publish request, or change publishing configuration. Inspect the selected brand with `/viralforge operations`, and use the existing health, worker, and scheduler checks for infrastructure diagnosis.
+# Autopilot production boundary
+
+Before enabling a supervised level, validate the policy version, timezone, source rights/moderation policy, daily limit, spacing, destination ownership, and emergency control state. Keep `MANUAL` as the normal starting level. Autopilot scheduling reserves durable slots but does not bypass the existing publish confirmation gates.

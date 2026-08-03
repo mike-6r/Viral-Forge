@@ -1,7 +1,10 @@
 import uuid
 from pathlib import Path
+from typing import cast
 
 from celery import Celery
+
+import app.autopilot.models  # noqa: F401
 
 # Register correction-plan tables before any task loads ProductionClip.  The
 # production clip model references clip_correction_plans by foreign key, and a
@@ -22,15 +25,58 @@ celery_app.conf.update(
     worker_concurrency=settings.analysis_max_concurrency,
 )
 celery_app.conf.beat_schedule = {
-    "scheduler-heartbeat": {"task": "viralforge.scheduler_heartbeat", "schedule": settings.scheduler_heartbeat_interval_seconds},
-    "cleanup-expired-media": {"task": "viralforge.cleanup_expired_media", "schedule": settings.cleanup_interval_seconds},
-    "refresh-published-analytics": {"task": "viralforge.refresh_published_analytics", "schedule": 3600},
-    "evaluate-producer-predictions": {"task": "viralforge.evaluate_producer_predictions", "schedule": 3600},
-    "execute-due-publish-requests": {"task": "viralforge.execute_due_publish_requests", "schedule": 60},
-    "refresh-due-tiktok-publish-requests": {"task": "viralforge.refresh_due_tiktok_publish_requests", "schedule": 60},
-    "refresh-tiktok-credentials": {"task": "viralforge.refresh_tiktok_credentials", "schedule": 900},
-    "poll-due-discovery-sources": {"task": "viralforge.discovery_poll_due_sources", "schedule": 300},
+    "scheduler-heartbeat": {
+        "task": "viralforge.scheduler_heartbeat",
+        "schedule": settings.scheduler_heartbeat_interval_seconds,
+    },
+    "cleanup-expired-media": {
+        "task": "viralforge.cleanup_expired_media",
+        "schedule": settings.cleanup_interval_seconds,
+    },
+    "refresh-published-analytics": {
+        "task": "viralforge.refresh_published_analytics",
+        "schedule": 3600,
+    },
+    "evaluate-producer-predictions": {
+        "task": "viralforge.evaluate_producer_predictions",
+        "schedule": 3600,
+    },
+    "execute-due-publish-requests": {
+        "task": "viralforge.execute_due_publish_requests",
+        "schedule": 60,
+    },
+    "refresh-due-tiktok-publish-requests": {
+        "task": "viralforge.refresh_due_tiktok_publish_requests",
+        "schedule": 60,
+    },
+    "refresh-tiktok-credentials": {
+        "task": "viralforge.refresh_tiktok_credentials",
+        "schedule": 900,
+    },
+    "poll-due-discovery-sources": {
+        "task": "viralforge.discovery_poll_due_sources",
+        "schedule": 300,
+    },
     "refresh-operations-state": {"task": "viralforge.refresh_operations_state", "schedule": 300},
+    "evaluate-autopilot-brands": {"task": "viralforge.evaluate_autopilot_brands", "schedule": 300},
+    "run-scheduled-brand-discovery": {
+        "task": "viralforge.run_scheduled_brand_discovery",
+        "schedule": 300,
+    },
+    "advance-eligible-projects": {"task": "viralforge.advance_eligible_projects", "schedule": 120},
+    "rank-brand-queue": {"task": "viralforge.rank_brand_queue", "schedule": 300},
+    "fill-brand-schedule": {"task": "viralforge.fill_brand_schedule", "schedule": 300},
+    "execute-due-scheduled-content": {
+        "task": "viralforge.execute_due_scheduled_content",
+        "schedule": 60,
+    },
+    "refresh-provider-requests": {"task": "viralforge.refresh_provider_requests", "schedule": 60},
+    "refresh-post-analytics": {"task": "viralforge.refresh_post_analytics", "schedule": 3600},
+    "watchdog-stale-jobs": {"task": "viralforge.watchdog_stale_jobs", "schedule": 300},
+    "generate-autopilot-briefings": {
+        "task": "viralforge.generate_autopilot_briefings",
+        "schedule": 300,
+    },
 }
 
 
@@ -55,6 +101,157 @@ def refresh_operations_state() -> dict[str, int | str]:
         return {"status": "ok", "brands_processed": run_due_operations(session)}
     finally:
         session.close()
+
+
+@celery_app.task(name="viralforge.evaluate_autopilot_brands")
+def evaluate_autopilot_brands() -> dict[str, int | str]:
+    """Bounded policy tick.  It records health and never contacts a provider."""
+    from sqlalchemy import select
+
+    from app.autopilot.service import automation_summary
+    from app.brands.models import Brand
+
+    session = next(get_session())
+    try:
+        brands = list(session.scalars(select(Brand).where(Brand.is_active).limit(100)))
+        for brand in brands:
+            automation_summary(session, brand.id)
+        session.commit()
+        return {"status": "ok", "processed": len(brands)}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.run_scheduled_brand_discovery")
+def run_scheduled_brand_discovery() -> dict[str, int | str]:
+    """Delegate eligible source polling to the existing bounded discovery task."""
+    return cast(dict[str, int | str], discovery_poll_due_sources())
+
+
+@celery_app.task(name="viralforge.advance_eligible_projects")
+def advance_eligible_projects() -> dict[str, int | str]:
+    """Only queue existing processing work after a persisted ALLOW decision."""
+    from sqlalchemy import select
+
+    from app.autopilot.service import decide
+    from app.production.models import ProductionProject
+
+    session = next(get_session())
+    try:
+        projects = list(
+            session.scalars(
+                select(ProductionProject)
+                .where(ProductionProject.status == "SOURCE_ACCEPTED")
+                .limit(25)
+            )
+        )
+        advanced = 0
+        for project in projects:
+            result = decide(
+                session,
+                project.brand_id,
+                "PROCESS_SOURCE",
+                "production_project",
+                project.id,
+                evidence={"rights_approved": False, "moderation_approved": False},
+            )
+            if result.decision == "ALLOW":
+                process_accepted_source.delay(str(project.id))
+                advanced += 1
+        return {"status": "ok", "processed": len(projects), "advanced": advanced}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.rank_brand_queue")
+def rank_brand_queue() -> dict[str, int | str]:
+    from sqlalchemy import select
+
+    from app.autopilot.service import rank_queue
+    from app.brands.models import Brand
+
+    session = next(get_session())
+    try:
+        count = 0
+        for brand in session.scalars(select(Brand).where(Brand.is_active).limit(100)):
+            count += len(rank_queue(session, brand.id))
+        return {"status": "ok", "ranked": count}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.fill_brand_schedule")
+def fill_brand_schedule() -> dict[str, int | str]:
+    """Scheduling preparation is intentionally review-first; no slot is guessed."""
+    return {
+        "status": "ok",
+        "reserved": 0,
+        "message": "Operator-selected destinations are required.",
+    }
+
+
+@celery_app.task(name="viralforge.execute_due_scheduled_content")
+def execute_due_scheduled_content() -> dict[str, int | str]:
+    """Due slots create reconciliation/review work; this task never silently posts."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.autopilot.models import AutopilotScheduleSlot
+    from app.autopilot.service import decide
+
+    session = next(get_session())
+    try:
+        due = list(
+            session.scalars(
+                select(AutopilotScheduleSlot)
+                .where(
+                    AutopilotScheduleSlot.status == "RESERVED",
+                    AutopilotScheduleSlot.scheduled_for <= datetime.now(UTC).isoformat(),
+                )
+                .limit(25)
+            )
+        )
+        for slot in due:
+            decide(
+                session,
+                slot.brand_id,
+                "TRANSFER_DRAFT",
+                "autopilot_schedule_slot",
+                slot.id,
+                evidence={"destination_id": str(slot.destination_account_id)},
+            )
+        return {"status": "ok", "processed": len(due)}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.refresh_provider_requests")
+def refresh_provider_requests() -> dict[str, int | str]:
+    """Reuse the existing official TikTok reconciliation boundary."""
+    return cast(dict[str, int | str], refresh_due_tiktok_publish_requests())
+
+
+@celery_app.task(name="viralforge.refresh_post_analytics")
+def refresh_post_analytics() -> dict[str, int | str]:
+    return cast(dict[str, int | str], refresh_published_analytics())
+
+
+@celery_app.task(name="viralforge.watchdog_stale_jobs")
+def watchdog_stale_jobs() -> dict[str, int | str]:
+    from app.autopilot.service import stale_runs
+
+    session = next(get_session())
+    try:
+        rows = stale_runs(session)
+        return {"status": "ok", "stale": len(rows)}
+    finally:
+        session.close()
+
+
+@celery_app.task(name="viralforge.generate_autopilot_briefings")
+def generate_autopilot_briefings() -> dict[str, int | str]:
+    return cast(dict[str, int | str], refresh_operations_state())
 
 
 @celery_app.task(name="viralforge.stale_job_detection_preview")
@@ -298,6 +495,7 @@ def render_approved_opportunity(opportunity_id: str) -> dict[str, str]:
             # Inspection is opt-in per brand and must never hold up the normal
             # finished-clip review or mutate its decision state.
             from app.rendered_media.service import inspection_config
+
             if bool(inspection_config(session, clip, settings).get("auto_run")):
                 inspect_rendered_media.delay(str(clip.id))
         return {"status": clip.render_status, "clip_id": str(clip.id)}
@@ -360,7 +558,13 @@ def generate_producer_recommendations(project_id: str) -> dict[str, str | int]:
 
     session = next(get_session())
     try:
-        actor = session.scalar(select(User.id).join(UserRole, UserRole.user_id == User.id).join(Role, Role.id == UserRole.role_id).where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN])).order_by(User.created_at))
+        actor = session.scalar(
+            select(User.id)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN]))
+            .order_by(User.created_at)
+        )
         project = session.get(ProductionProject, project_id)
         if project is None:
             return {"status": "not_found", "project_id": project_id}
@@ -386,7 +590,13 @@ def generate_clip_quality_report(clip_id: str) -> dict[str, str | int | float]:
 
     session = next(get_session())
     try:
-        actor = session.scalar(select(User.id).join(UserRole, UserRole.user_id == User.id).join(Role, Role.id == UserRole.role_id).where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN])).order_by(User.created_at))
+        actor = session.scalar(
+            select(User.id)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN]))
+            .order_by(User.created_at)
+        )
         clip = session.get(ProductionClip, clip_id)
         if clip is None:
             return {"status": "not_found", "clip_id": clip_id}
@@ -410,12 +620,31 @@ def inspect_rendered_media(clip_id: str, rerun: bool = False) -> dict[str, str |
 
     session = next(get_session())
     try:
-        actor = session.scalar(select(User.id).join(UserRole, UserRole.user_id == User.id).join(Role, Role.id == UserRole.role_id).where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN])).order_by(User.created_at))
+        actor = session.scalar(
+            select(User.id)
+            .join(UserRole, UserRole.user_id == User.id)
+            .join(Role, Role.id == UserRole.role_id)
+            .where(User.is_active, Role.name.in_([RoleName.OWNER, RoleName.ADMIN]))
+            .order_by(User.created_at)
+        )
         clip = session.get(ProductionClip, clip_id)
         if clip is None:
             return {"status": "not_found", "clip_id": clip_id}
-        item = request_inspection(session, actor, clip, LocalFilesystemStorage(Path(settings.local_storage_root)), rerun=rerun, settings=settings)
-        result = execute_inspection(session, actor, item, LocalFilesystemStorage(Path(settings.local_storage_root)), settings=settings)
+        item = request_inspection(
+            session,
+            actor,
+            clip,
+            LocalFilesystemStorage(Path(settings.local_storage_root)),
+            rerun=rerun,
+            settings=settings,
+        )
+        result = execute_inspection(
+            session,
+            actor,
+            item,
+            LocalFilesystemStorage(Path(settings.local_storage_root)),
+            settings=settings,
+        )
         if result.status == "COMPLETED":
             build_quality_report(session, actor, clip, rerun=True)
             # A revision remains independently reviewable even if this inspection
@@ -429,7 +658,11 @@ def inspect_rendered_media(clip_id: str, rerun: bool = False) -> dict[str, str |
                 plan.result_inspection_id = result.id
                 plan.status = CorrectionPlanStatus.COMPLETED
             session.commit()
-        return {"status": result.status, "inspection_version": result.inspection_version, "overall_score": result.overall_score or 0.0}
+        return {
+            "status": result.status,
+            "inspection_version": result.inspection_version,
+            "overall_score": result.overall_score or 0.0,
+        }
     finally:
         session.close()
 
@@ -452,7 +685,10 @@ def render_corrected_clip(plan_id: str) -> dict[str, str]:
     try:
         try:
             plan = render_confirmed_plan(
-                session, uuid.UUID(plan_id), LocalFilesystemStorage(Path(settings.local_storage_root)), settings
+                session,
+                uuid.UUID(plan_id),
+                LocalFilesystemStorage(Path(settings.local_storage_root)),
+                settings,
             )
         except CorrectionError as exc:
             return {"status": "failed", "code": exc.code}
@@ -506,7 +742,11 @@ def execute_tiktok_publish_request(request_id: str) -> dict[str, str | int]:
             request = execute_tiktok_publish(session, uuid.UUID(request_id))
         except PublishingError as error:
             return {"status": "blocked", "code": error.code}
-        return {"status": request.status, "request_id": str(request.id), "progress": request.upload_progress_percent}
+        return {
+            "status": request.status,
+            "request_id": str(request.id),
+            "progress": request.upload_progress_percent,
+        }
     finally:
         session.close()
 
@@ -521,7 +761,11 @@ def refresh_tiktok_publish_status(request_id: str) -> dict[str, str | int]:
             request = refresh_tiktok_status(session, uuid.UUID(request_id))
         except PublishingError as error:
             return {"status": "blocked", "code": error.code}
-        return {"status": request.status, "request_id": str(request.id), "progress": request.upload_progress_percent}
+        return {
+            "status": request.status,
+            "request_id": str(request.id),
+            "progress": request.upload_progress_percent,
+        }
     finally:
         session.close()
 
@@ -538,7 +782,22 @@ def refresh_due_tiktok_publish_requests() -> dict[str, int | str]:
         return {"status": "disabled", "processed": 0}
     session = next(get_session())
     try:
-        requests = list(session.scalars(select(PublishRequest).where(PublishRequest.provider_mode.in_(["DRAFT_UPLOAD", "DIRECT_POST"]), PublishRequest.status.in_([PublishRequestStatus.PROCESSING, PublishRequestStatus.UNKNOWN_REMOTE_OUTCOME])).order_by(PublishRequest.updated_at).limit(10)))
+        requests = list(
+            session.scalars(
+                select(PublishRequest)
+                .where(
+                    PublishRequest.provider_mode.in_(["DRAFT_UPLOAD", "DIRECT_POST"]),
+                    PublishRequest.status.in_(
+                        [
+                            PublishRequestStatus.PROCESSING,
+                            PublishRequestStatus.UNKNOWN_REMOTE_OUTCOME,
+                        ]
+                    ),
+                )
+                .order_by(PublishRequest.updated_at)
+                .limit(10)
+            )
+        )
         for request in requests:
             try:
                 refresh_tiktok_status(session, request.id)
@@ -564,7 +823,9 @@ def refresh_tiktok_credentials() -> dict[str, int | str]:
 
     session = next(get_session())
     try:
-        due_at = (datetime.now(UTC) + timedelta(seconds=settings.tiktok_credential_refresh_window_seconds)).isoformat()
+        due_at = (
+            datetime.now(UTC) + timedelta(seconds=settings.tiktok_credential_refresh_window_seconds)
+        ).isoformat()
         accounts = list(
             session.scalars(
                 select(DestinationAccount)

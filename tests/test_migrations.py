@@ -28,9 +28,9 @@ def test_initial_migration_is_self_contained_and_explicit():
     assert "contentstatus" in source
 
 
-def test_migration_history_has_one_operations_daily_reports_head():
+def test_migration_history_has_one_autopilot_policy_scheduling_head():
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["0031_operations_daily_reports"]
+    assert heads == ["0032_autopilot_policy_scheduling"]
 
 
 def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path):

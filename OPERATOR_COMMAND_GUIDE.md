@@ -1,5 +1,9 @@
 # ViralForge operator commands
 
+## Autopilot and scheduling
+
+Use `/viralforge operations` for the selected brand's automation state and exception count. The API provides the owner/admin policy and emergency-control actions; every write requires the expected version returned by the preceding read. Pause first during uncertainty, then use the existing source, clip, package, and publishing review controls to resolve work.
+
 ## Rendered media quality
 
 On a finished clip, use **Media Quality** in Discord. It queues bounded local FFprobe/FFmpeg evidence collection and remains advisory. Use **View Issues** and the private preview, then record an advice decision if useful. It does not change the clip approval or post anything.
