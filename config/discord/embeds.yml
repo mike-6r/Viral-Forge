@@ -1,146 +1,180 @@
 embeds:
   welcome:
-    channel: start_here
-    eyebrow: VIRALFORGE
+    channel: welcome
+    eyebrow: PLATFORM
     title: ViralForge
-    description: "Content operations for short-form brands. Discover strong source videos, prepare clips, review before publishing, and learn from performance in one guided workspace."
-    color: "#FF4D44"
-    asset: welcome-command-center.png
+    description: "Review-first content operations for short-form brands."
+    color: "#FF4F2E"
+    asset: viralforge-welcome-v2.png
     hero_asset: true
     show_icon: true
     show_footer: true
     fields:
-      - {name: For brands, value: "Keep sources, review decisions, publishing rules, and performance feedback organized."}
-      - {name: For operators, value: "Move approved content forward without losing the source context."}
-      - {name: Start here, value: "Accept the standards, set up access, then choose your first workspace goal."}
-    actions: [choose_role, how_it_works, view_pricing]
+      - {name: Discover, value: "Find or add approved source material."}
+      - {name: Review, value: "Approve clips, metadata, context, and publishing readiness."}
+      - {name: Decide, value: "Approved work waits for an explicit human publishing decision."}
+    actions: [choose_role, how_it_works, open_support]
   standards:
-    channel: start_here
+    channel: welcome
     eyebrow: ACCESS + TRUST
-    title: Community standards
-    description: "A short agreement that keeps access, customer work, and community feedback safe."
-    color: "#FF4D44"
+    title: Start with the standards
+    description: "Accept the community standards to unlock the member workspace."
+    color: "#FF4F2E"
+    show_footer: true
     fields:
-      - {name: Keep it private, value: "Never post credentials, customer files, or private media in Discord."}
-      - {name: Keep it responsible, value: "Use approved sources and leave specific, respectful feedback."}
-    actions: [accept_rules, terms, privacy]
+      - {name: Keep work private, value: "Never post credentials, customer files, or private media in Discord."}
+      - {name: Keep decisions human, value: "Use authorized sources and review content before anything goes live."}
+    actions: [accept_rules]
   choose_roles:
-    channel: choose_your_role
-    eyebrow: ACCESS SETUP
+    channel: access
+    eyebrow: ACCESS
     title: Set Up Your Access
-    description: "Choose how you use ViralForge so the workspace shows the right tools. This is a profile choice, not permission escalation."
-    color: "#3BA3FF"
+    description: "Choose your account type and the updates you want. Profile choices never grant operator authority."
+    color: "#5B8CFF"
+    show_footer: true
     fields:
-      - {name: Account type, value: "Creator, Brand, or Agency. Operator and Support access are assigned by staff only."}
-      - {name: Notifications, value: "Choose Product Updates, Workflow Alerts, Creator Tips, Case Studies, or Community Events."}
-      - {name: Next step, value: "Continue onboarding when your profile is saved, or open a private request for help."}
+      - {name: Step 1, value: "Choose Creator, Brand, or Agency."}
+      - {name: Step 2, value: "Choose Product Updates, Workflow Alerts, Creator Tips, Case Studies, or Community Events."}
+      - {name: Step 3, value: "Continue onboarding or open a private support request."}
+    actions: []
+  announcements:
+    channel: announcements
+    eyebrow: OFFICIAL UPDATES
+    title: Announcements
+    description: "Platform changes, maintenance, release notes, and important operator notices appear here."
+    color: "#FF4F2E"
+    show_footer: true
+    fields:
+      - {name: Read-only by design, value: "Reply in Support or Community so official updates stay easy to scan."}
     actions: []
   product_overview:
     channel: product_overview
     eyebrow: PLATFORM
-    title: One clear content workflow
-    description: "A calm, review-first system for finding source material, preparing clips, and learning what performs."
-    color: "#FF4D44"
+    title: One Clear Content Workflow
+    description: "Keep source discovery, clip preparation, review, publishing decisions, and performance learning in one organized workspace."
+    color: "#FF4F2E"
+    show_footer: true
     fields:
-      - {name: Control, value: "Important decisions stay human-approved."}
-      - {name: Scale, value: "Run one brand or many without mixing context."}
-    actions: [how_it_works, start_onboarding]
+      - {name: Source, value: "Add approved sources or manual video URLs."}
+      - {name: Prepare, value: "Inspect and analyze authorized media."}
+      - {name: Review, value: "Approve creative work before any publishing decision."}
+      - {name: Decide, value: "Ready-to-post never means automatic upload."}
+    actions: [how_it_works, start_onboarding, view_pricing]
   how_it_works:
     channel: how_it_works
     eyebrow: WORKFLOW
-    title: Discover. Clip. Review. Publish. Learn.
-    description: "A review-first path from an approved source to a measured short-form post."
-    color: "#3BA3FF"
+    title: From Source Video to Approved Post
+    description: "A review-first path from authorized material to a ready-to-post content package."
+    color: "#5B8CFF"
+    show_footer: true
     fields:
-      - {name: Discover, value: "Choose approved source material and identify promising moments."}
-      - {name: Review, value: "Check clips, source context, captions, and destination before anything goes live."}
-      - {name: Learn, value: "Use available performance signals to improve the next review."}
-    actions: []
+      - {name: Discover + Analyze, value: "Find a source and identify strong moments with context."}
+      - {name: Clip + Review, value: "Prepare clips and review the creative output."}
+      - {name: Publish decision, value: "A person chooses whether and when approved content goes live."}
+    actions: [start_onboarding, view_pricing, open_support]
   pricing:
     channel: pricing_and_access
     eyebrow: PLANS
-    title: Plans for the way you operate
-    description: "Choose the level of workspace support that fits your content operation. Access and billing are handled privately."
-    color: "#FF4D44"
+    title: Choose the Right Operating Level
+    description: "Access is reviewed privately so every workspace is configured for the right content operation."
+    color: "#FF4F2E"
+    show_footer: true
     fields:
-      - {name: Creator, value: "Best for: one focused content brand. Includes: a guided workspace and review flow. Next: request access."}
-      - {name: Professional, value: "Best for: teams with more review volume. Includes: team workflows and broader operating controls. Next: talk to us."}
-      - {name: Agency, value: "Best for: multiple brands or client workspaces. Includes: multi-brand coordination. Next: talk to us."}
-      - {name: Enterprise, value: "Best for: custom workflows and dedicated support. Includes: tailored operating requirements. Next: open a private request."}
+      - {name: Creator, value: "One focused content brand."}
+      - {name: Professional, value: "A team managing more review volume."}
+      - {name: Agency, value: "Multiple brands and client workspaces."}
+      - {name: Enterprise, value: "Custom workflows, integrations, and dedicated support."}
     actions: [request_access, talk_to_sales]
   workspace_guide:
     channel: workspace_guide
     eyebrow: WORKSPACES
-    title: Keep every brand in context
-    description: "Each brand gets its own workspace so sources, review decisions, publishing rules, analytics, and team access stay clean."
-    color: "#3BA3FF"
+    title: Keep Every Brand in Context
+    description: "Sources, reviews, publishing rules, analytics, and team access stay organized by brand."
+    color: "#5B8CFF"
+    show_footer: true
     fields:
-      - {name: Sources, value: "Keep approved source identities and source quality in the right brand context."}
-      - {name: Review + rules, value: "Keep clip decisions and publishing controls clear for each workspace."}
-      - {name: Analytics + team access, value: "Learn from performance without mixing team access or results."}
-    actions: [start_onboarding]
-  review_queue:
-    channel: review_queue
-    eyebrow: REVIEW + PUBLISH
-    title: Review before anything goes live
-    description: "ViralForge prepares the work; a person decides what moves forward."
-    color: "#FF4D44"
-    fields:
-      - {name: Review clips, value: "Check the moment, context, framing, and source acceptance."}
-      - {name: Check post details, value: "Review caption, metadata, rights, moderation, and the destination account."}
-      - {name: Approve or reject, value: "Choose what proceeds. Publishing and scheduling always require an explicit human decision."}
+      - {name: Sources, value: "Approved channels, videos, feeds, websites, and uploads."}
+      - {name: Review queue, value: "Human decisions for sources, clips, and content packages."}
+      - {name: Rules + analytics, value: "Publishing requirements and performance feedback stay brand-scoped."}
     actions: [start_onboarding, open_support]
+  review_and_publish:
+    channel: review_and_publish
+    eyebrow: REVIEW
+    title: Approve What Matters Before Anything Goes Live
+    description: "ViralForge prepares content. Operators make the final decisions."
+    color: "#FF4F2E"
+    show_footer: true
+    fields:
+      - {name: Creative review, value: "Approve or reject clips and content packages."}
+      - {name: Rights + context, value: "Review attribution, warnings, source acceptance, and publishing readiness."}
+      - {name: Publishing decision, value: "READY_TO_POST means ready for human action, not automatic upload."}
+    actions: [start_onboarding, how_it_works, open_support]
   analytics:
     channel: analytics
-    eyebrow: FEEDBACK LOOP
-    title: Learn from what performs
-    description: "ViralForge turns publishing results into practical feedback for future clips."
-    color: "#3BA3FF"
+    eyebrow: ANALYTICS
+    title: Learn What Performs
+    description: "Turn official platform results and operator feedback into practical recommendations."
+    color: "#5B8CFF"
+    show_footer: true
     fields:
-      - {name: Signals, value: "Views, retention, engagement, follower growth, and other metrics only when the platform provides them."}
-      - {name: Learnings, value: "Compare hooks, pacing, captions, topics, source quality, and posting time."}
-      - {name: Decisions, value: "Recommendations inform your next review; settings never change silently."}
-    actions: [start_onboarding]
+      - {name: Signals, value: "Views, retention, engagement, follower growth, and other available metrics."}
+      - {name: Learnings, value: "Compare hooks, pacing, captions, topics, formats, and source quality."}
+      - {name: Decisions, value: "Recommendations support people; settings never change silently."}
+    actions: [start_onboarding, open_support]
   onboarding:
     channel: onboarding
     eyebrow: ONBOARDING
-    title: Configure your first workspace
-    description: "Follow the checklist once, then use the workspace with a clear review-first routine."
-    color: "#FF4D44"
+    title: Configure Your First Workspace
+    description: "Start with one brand, one approved source, and one review path."
+    color: "#FF4F2E"
+    show_footer: true
     fields:
-      - {name: 1. Set up access, value: "Choose your account type and notifications."}
-      - {name: 2. Confirm your workspace, value: "Tell us the brand or team context you need."}
-      - {name: 3. Add approved sources, value: "Start with sources you are permitted to process."}
-      - {name: 4. Review your first post, value: "Approve the first clip and post details before any publish decision."}
+      - {name: 1. Access, value: "Choose your account type and notifications."}
+      - {name: 2. Workspace, value: "Confirm your brand and operating context."}
+      - {name: 3. Source, value: "Add approved source material."}
+      - {name: 4. Review, value: "Review your first clip and post details before a publishing decision."}
     actions: [start_onboarding, open_support]
   support:
     channel: support
     eyebrow: SUPPORT
     title: Get Support
-    description: "Open a private request for workspace access, sources, publishing, plans, bugs, or custom workflows."
-    color: "#3BA3FF"
+    description: "Open a private request for access, workspace setup, source issues, publishing questions, plans, bugs, or custom workflows."
+    color: "#5B8CFF"
+    show_footer: true
     fields:
-      - {name: Choose a topic, value: "Account / Access, Workspace Setup, Source or Video Issue, Publishing Issue, Billing / Plan, Bug Report, or Custom Workflow."}
-      - {name: Keep it safe, value: "Never paste passwords, credentials, or private media in a public channel."}
+      - {name: Keep it secure, value: "Never paste credentials, passwords, private media, or source files in public channels."}
     actions: [open_support]
   feature_requests:
     channel: feature_requests
     eyebrow: PRODUCT FEEDBACK
-    title: Improve the workflow
-    description: "Create one focused forum post. Explain the problem before proposing a solution."
-    color: "#FF4D44"
+    title: Improve the Workflow
+    description: "Create one focused post: explain the problem, who needs it, and the workflow it would improve."
+    color: "#FF4F2E"
+    show_footer: true
     fields:
       - {name: Use tags, value: "Feature, Integration, Workflow, Bug, Quality of Life, In Review, or Planned."}
     actions: [submit_feature]
-  team_dashboard:
-    channel: team_dashboard
+  ops_center:
+    channel: ops_center
     eyebrow: OPERATIONS
     title: Operations Center
-    description: "Monitor active brands, review queues, content readiness, publishing issues, and support activity."
-    color: "#FF4D44"
+    description: "Monitor active brands, review work, ready-to-post items, support activity, and automation health."
+    color: "#FF4F2E"
+    show_footer: true
     fields:
-      - {name: Needs attention, value: "Start with failed jobs, holds, and escalated support requests."}
-      - {name: Active workspaces, value: "Check brands with current source, review, or publishing activity."}
-      - {name: Review + publishing, value: "Open customer review for clips and ticket logs for support activity."}
-      - {name: Next action, value: "Choose one queue below; diagnostics remain in staff-only tools."}
-    actions: [view_tickets, review_customers, refresh, open_logs]
+      - {name: Needs attention, value: "Start with failed jobs, blocked work, and escalated support."}
+      - {name: Review queue, value: "Open the next creative decision for the active brand."}
+      - {name: Ready to post, value: "Queue items still require an explicit human publishing decision."}
+      - {name: Next action, value: "Use the controls below; diagnostics stay in staff-only tools."}
+    actions: [open_review_queue, ready_to_post, add_video, open_tickets, refresh]
+  ready_to_post:
+    channel: ready_to_post
+    eyebrow: PUBLISHING DECISION
+    title: Ready to Post
+    description: "Approved content waits here for an explicit destination, publish, or schedule decision."
+    color: "#F5A524"
+    show_footer: true
+    fields:
+      - {name: No silent publishing, value: "This queue never uploads content by itself."}
+      - {name: Before proceeding, value: "Confirm source, rights, moderation, clip, package, and destination requirements."}
+    actions: [open_review_queue, open_support]

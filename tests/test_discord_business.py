@@ -4,7 +4,12 @@ from sqlalchemy import inspect
 
 from app.discord_business.discord import LEGACY_MANAGED_CHANNEL_NAMES
 from app.discord_business.models import DiscordGuildConfig
-from app.discord_business.service import BusinessRepository, load_config, plan_resources
+from app.discord_business.service import (
+    BusinessRepository,
+    audience_role_keys,
+    load_config,
+    plan_resources,
+)
 
 
 def test_discord_business_configuration_is_complete_and_plans_premium_control_plane():
@@ -14,17 +19,16 @@ def test_discord_business_configuration_is_complete_and_plans_premium_control_pl
     assert {
         ("role", "owner"),
         ("role", "operations_lead"),
-        ("role", "verified_customer"),
         ("role", "customer"),
-        ("channel", "start_here"),
-        ("channel", "team_dashboard"),
+        ("role", "brand"),
+        ("channel", "welcome"),
+        ("channel", "ops_center"),
+        ("channel", "ready_to_post"),
         ("channel", "feature_requests"),
     } <= keys
-    assert next(item for item in resources if item.resource_key == "team_dashboard").audience == "staff"
+    assert next(item for item in resources if item.resource_key == "ops_center").audience == "staff"
     assert next(
-        item
-        for item in resources
-        if item.resource_type == "channel" and item.resource_key == "start_here"
+        item for item in resources if item.resource_type == "channel" and item.resource_key == "welcome"
     ).read_only
     assert next(item for item in resources if item.resource_key == "feature_requests").kind == "forum"
     assert next(item for item in resources if item.resource_key == "feature_requests").tags == (
@@ -76,16 +80,18 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
         "welcome",
         "standards",
         "choose_roles",
+        "announcements",
         "product_overview",
         "how_it_works",
         "pricing",
         "workspace_guide",
-        "review_queue",
+        "review_and_publish",
         "analytics",
         "support",
         "onboarding",
-        "team_dashboard",
         "feature_requests",
+        "ops_center",
+        "ready_to_post",
     }
     hero_panels = set()
     for key, panel in config["embeds"]["embeds"].items():
@@ -99,17 +105,19 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
     assert hero_panels == {"welcome"}
 
 
-def test_discord_saas_polish_has_exactly_seven_categories_and_nineteen_channels():
+def test_discord_saas_polish_has_clean_categories_and_twenty_channels():
     config = load_config(Path("config/discord"))
+    resources = plan_resources(config)
     assert len(config["server"]["categories"]) == 7
-    assert len(config["channels"]["channels"]) == 19
+    assert len(config["channels"]["channels"]) == 20
+    assert len({(item.resource_type, item.resource_key) for item in resources}) == len(resources)
     assert [item["key"] for item in config["server"]["categories"]] == [
-        "start_here",
+        "start",
         "platform",
         "workspaces",
         "customers",
         "community",
-        "team",
+        "operations",
         "private_requests",
     ]
     assert [item["name"] for item in config["channels"]["channels"]] == [
@@ -129,11 +137,13 @@ def test_discord_saas_polish_has_exactly_seven_categories_and_nineteen_channels(
         "creator-talk",
         "wins",
         "ops-center",
-        "customer-review",
+        "review-queue",
+        "ready-to-post",
         "operator-alerts",
         "ticket-logs",
     ]
     assert not any(item["category"] == "private_requests" for item in config["channels"]["channels"])
+    assert not any("test" in item["name"] or "demo" in item["name"] for item in config["channels"]["channels"])
 
 
 def test_legacy_cleanup_candidates_do_not_overlap_current_channel_names():
@@ -144,48 +154,41 @@ def test_legacy_cleanup_candidates_do_not_overlap_current_channel_names():
     assert not LEGACY_MANAGED_CHANNEL_NAMES & current_names
 
 
-def test_rules_acceptance_gates_member_areas_but_not_start_here():
+def test_rules_acceptance_gates_workspaces_but_leaves_public_pages_visible():
     config = load_config(Path("config/discord"))
     category_audiences = {
         item["key"]: item["audience"] for item in config["server"]["categories"]
     }
-    assert category_audiences["start_here"] == "public"
-    assert {category_audiences[key] for key in ("platform", "workspaces", "customers", "community")} == {
-        "member"
-    }
-    assert category_audiences["team"] == "staff"
+    assert category_audiences["start"] == "public"
+    assert {category_audiences[key] for key in ("platform", "customers", "community")} == {"public"}
+    assert category_audiences["workspaces"] == "member"
+    assert category_audiences["operations"] == "staff"
     assert category_audiences["private_requests"] == "staff"
     for channel in config["channels"]["channels"]:
-        if channel["category"] == "start_here":
+        if channel["category"] in {"start", "platform", "customers", "community"}:
             assert channel["audience"] == "public"
-        elif channel["category"] not in {"team", "private_requests"}:
+        elif channel["category"] not in {"operations", "private_requests"}:
             assert channel["audience"] == "member"
 
 
 def test_discord_premium_role_and_forum_boundaries_are_configured():
     config = load_config(Path("config/discord"))
     names = {item["key"] for item in config["roles"]["roles"]}
-    assert {"member", "verified_customer", "customer", "trial_user"} <= names
+    assert {"member", "customer", "creator", "brand", "agency"} <= names
     assert set(config["role_panels"]["panels"]["notifications"]) == {
         "product_updates",
-        "processing_alerts",
-        "feature_releases",
+        "workflow_alerts",
+        "creator_tips",
         "case_studies",
         "community_events",
     }
     assert set(config["role_panels"]["account_type_role_keys"]) == {
         "creator",
         "agency",
-        "media_company",
-        "trial_user",
+        "brand",
     }
     assert not set(config["role_panels"]["account_type_role_keys"]) & {
-        "workspace_owner",
-        "reviewer",
-        "publisher",
-        "analytics_viewer",
         "customer",
-        "verified_customer",
     }
     channels = {item["key"]: item for item in config["channels"]["channels"]}
     assert channels["feature_requests"]["tags"] == [
@@ -193,3 +196,17 @@ def test_discord_premium_role_and_forum_boundaries_are_configured():
     ]
     assert config["embeds"]["embeds"]["choose_roles"]["actions"] == []
     assert set(config["tickets"]["ticket_types"]) >= {"general", "bug_report", "feature_request"}
+
+
+def test_public_and_staff_audiences_have_strict_role_boundaries():
+    assert audience_role_keys("public") == set()
+    assert audience_role_keys("member") == {"member"}
+    assert audience_role_keys("staff") == {
+        "owner",
+        "administrator",
+        "operations_lead",
+        "content_operator",
+        "customer_success",
+        "support_team",
+        "developer",
+    }

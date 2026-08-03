@@ -1,9 +1,8 @@
 audiences:
   public: {view: everyone, send: everyone}
   member: {view: member, send: member}
-  customer: {view: verified_customer, send: verified_customer}
-  bodycams_daily_hq: {view: bodycams_daily_hq, send: bodycams_daily_hq}
+  customer: {view: customer, send: customer}
   staff: {view: staff, send: staff}
   operator: {view: operator, send: operator}
-read_only_sender_roles: [owner, operator, admin, moderator, support, community_manager]
+read_only_sender_roles: [owner, administrator, operations_lead, content_operator, customer_success, support_team, developer]
 owner_setup_requires: guild_owner

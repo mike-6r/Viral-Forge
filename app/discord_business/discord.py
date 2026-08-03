@@ -75,7 +75,10 @@ ACTION_LABELS = {
     "talk_to_sales": "Talk to Sales",
     "view_publishing_flow": "Review Workflow",
     "view_tickets": "Open Tickets",
-    "review_customers": "View Reviews",
+    "open_tickets": "Open Tickets",
+    "open_review_queue": "Review Queue",
+    "ready_to_post": "Ready to Post",
+    "add_video": "Add Video",
     "refresh": "Refresh",
     "open_logs": "Ticket Activity",
     "submit_feature": "Submit Request",
@@ -117,7 +120,7 @@ LEGACY_MANAGED_CHANNEL_NAMES = frozenset(
         "posting-queue",
         "discovery-queue",
         "sources",
-        "review-queue",
+        "customer-review",
         "publishing-flow",
         "caption-lab",
         "discoveries",
@@ -147,15 +150,13 @@ def _session() -> Session:
 
 def _public_embed(config: dict[str, Any], key: str) -> discord.Embed:
     item = config["embeds"]["embeds"][key]
-    description = item["description"]
-    eyebrow = item.get("eyebrow")
-    if eyebrow:
-        description = f"**{eyebrow}**\n{description}"
     embed = discord.Embed(
         title=item["title"],
-        description=description,
+        description=item["description"],
         color=int(item.get("color", "#ff4d44").lstrip("#"), 16),
     )
+    if eyebrow := item.get("eyebrow"):
+        embed.set_author(name=str(eyebrow))
     for field in item.get("fields", [])[:4]:
         embed.add_field(name=field["name"], value=field["value"], inline=False)
     branding = config["branding"]
@@ -398,10 +399,16 @@ async def reset_legacy_setup(guild: discord.Guild, *, apply_changes: bool) -> tu
             .filter(DiscordGuildResource.guild_config_id == guild_config.id)
             .all()
         )
+        current_resource_ids = {
+            (resource.resource_type, resource.discord_id)
+            for resource in resources
+            if (resource.resource_type, resource.resource_key) in current_resource_keys
+        }
         obsolete = [
             resource
             for resource in resources
             if (resource.resource_type, resource.resource_key) not in current_resource_keys
+            and (resource.resource_type, resource.discord_id) not in current_resource_ids
         ]
         obsolete_channel_ids = {
             int(resource.discord_id)
@@ -601,13 +608,31 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
         if self.action == "submit_feature":
             await interaction.response.send_modal(FeedbackModal("feature_requests", "Feature request"))
             return
+        if self.action == "add_video":
+            await interaction.response.send_message(
+                "Use `/viralforge submit` to add an authorized video to the active brand.",
+                ephemeral=True,
+            )
+            return
+        if self.action == "open_review_queue":
+            await interaction.response.send_message(
+                "Use `/viralforge review` to open the next review decision for the active brand.",
+                ephemeral=True,
+            )
+            return
+        if self.action == "ready_to_post":
+            await interaction.response.send_message(
+                "Use `/viralforge ready-to-post` to review content waiting for a human publishing decision.",
+                ephemeral=True,
+            )
+            return
         channel_key = {
             "view_platform": "product_overview",
             "how_it_works": "how_it_works",
             "view_pricing": "pricing_and_access",
-            "view_publishing_flow": "publishing_flow",
+            "view_publishing_flow": "review_and_publish",
             "view_tickets": "ticket_logs",
-            "review_customers": "customer_review",
+            "open_tickets": "ticket_logs",
             "open_logs": "ticket_logs",
         }.get(self.action)
         if self.action == "refresh":
@@ -920,6 +945,29 @@ def _reset_summary(actions: list[str], changed: int, apply_changes: bool) -> str
     )
 
 
+def _setup_summary(
+    config: dict[str, Any], *, changed: int, panels: int, legacy_detected: int, applied: bool
+) -> str:
+    plan = plan_resources(config)
+    roles = sum(item.resource_type == "role" for item in plan)
+    categories = sum(item.resource_type == "category" for item in plan)
+    channels = sum(item.resource_type == "channel" for item in plan)
+    if not applied:
+        return (
+            f"Preview ready for ViralForge Discord v{config['server']['version']}.\n"
+            f"Roles: {roles} • Categories: {categories} • Channels: {channels}\n"
+            f"Legacy/demo items detected: {legacy_detected}\n"
+            "Nothing changed. Re-run with `apply_changes: True` to apply the managed layout."
+        )
+    return (
+        f"ViralForge Discord v{config['server']['version']} is applied.\n"
+        f"Managed roles: {roles} • Categories: {categories} • Channels: {channels}\n"
+        f"Resources created or refreshed: {changed} • official panels refreshed: {panels}\n"
+        f"Legacy/demo items detected: {legacy_detected} (preserved until `/setup-reset` is confirmed).\n"
+        "Next: review #welcome on mobile, then use /viralforge home for the active brand."
+    )
+
+
 def _operations_dashboard_embed(summary: dict[str, dict[str, object]], section: str) -> discord.Embed:
     values = summary.get(section, {})
     embed = discord.Embed(
@@ -1117,17 +1165,24 @@ def register_business_commands(bot: Any) -> None:
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            preview, changed = await apply_server_plan(
+            _, changed = await apply_server_plan(
                 interaction.guild, apply_changes=apply_changes
             )
             panels = await publish_public_embeds(interaction.guild) if apply_changes else 0
+            legacy_actions, _ = await reset_legacy_setup(
+                interaction.guild, apply_changes=False
+            )
         except (discord.DiscordException, DiscordBusinessError) as error:
             await interaction.followup.send(f"Setup stopped safely: {error}", ephemeral=True)
             return
         await interaction.followup.send(
-            f"Setup complete: {changed} managed resources refreshed and {panels} official panels published. Unmanaged resources were preserved."
-            if apply_changes
-            else f"Dry-run: {len(preview)} resources would be created or repaired. Re-run with `apply_changes: True` to apply.",
+            _setup_summary(
+                load_config(),
+                changed=changed,
+                panels=panels,
+                legacy_detected=len(legacy_actions),
+                applied=apply_changes,
+            ),
             ephemeral=True,
         )
 
@@ -1362,17 +1417,22 @@ def register_business_commands(bot: Any) -> None:
         # Discord's interaction deadline, then send the final result ephemerally.
         await interaction.response.defer(ephemeral=True, thinking=True)
         try:
-            preview, changed = await apply_server_plan(
+            _, changed = await apply_server_plan(
                 interaction.guild, apply_changes=apply_changes
             )
             panels = await publish_public_embeds(interaction.guild) if apply_changes else 0
+            legacy_actions, _ = await reset_legacy_setup(
+                interaction.guild, apply_changes=False
+            )
         except (discord.DiscordException, DiscordBusinessError) as error:
             await interaction.followup.send(f"Setup stopped safely: {error}", ephemeral=True)
             return
-        message = (
-            f"Applied or refreshed {changed} managed resources and {panels} official panels. Existing unmanaged resources were retained."
-            if apply_changes
-            else f"Dry-run: {len(preview)} resources would be created or repaired. Re-run with `apply_changes: True` to apply."
+        message = _setup_summary(
+            load_config(),
+            changed=changed,
+            panels=panels,
+            legacy_detected=len(legacy_actions),
+            applied=apply_changes,
         )
         await interaction.followup.send(message, ephemeral=True)
 

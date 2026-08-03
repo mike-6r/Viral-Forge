@@ -1,9 +1,9 @@
 max_self_role_selections: 8
 panels:
-  notifications: [product_updates, processing_alerts, feature_releases, case_studies, community_events]
-  interests: [creator, media_company, agency, trial_user]
-account_type_role_keys: [creator, media_company, agency, trial_user]
-managed_role_keys: [owner, administrator, operations_lead, content_operator, customer_success, support_team, developer, verified_customer, customer, workspace_owner, reviewer, publisher, analytics_viewer]
-temporary_role_keys: [trial_user]
+  notifications: [product_updates, workflow_alerts, creator_tips, case_studies, community_events]
+  interests: [creator, brand, agency]
+account_type_role_keys: [creator, brand, agency]
+managed_role_keys: [owner, administrator, operations_lead, content_operator, customer_success, support_team, developer, customer]
+temporary_role_keys: []
 exclusive_groups:
-  customer_type: [creator, media_company, agency]
+  customer_type: [creator, brand, agency]

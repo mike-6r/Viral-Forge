@@ -33,3 +33,4 @@ The current Discord setup uses a flat, quiet SaaS visual system: clean dark spac
 | `pricing-access.png` | Pricing and Access |
 | `staff-dashboard.png` | Team Dashboard |
 | `source-discovery.png` | Source Management |
+| `viralforge-welcome-v2.png` | Premium `#welcome` workflow banner; generated with the project image workflow |
