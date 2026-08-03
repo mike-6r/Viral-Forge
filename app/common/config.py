@@ -94,6 +94,8 @@ class Settings(BaseSettings):
     tiktok_draft_upload_enabled: bool = False
     tiktok_direct_post_enabled: bool = False
     tiktok_public_direct_post_enabled: bool = False
+    download_token_ttl_seconds: int = 900
+    download_maximum_access_count: int = 2
     tiktok_default_mode: str = "DRAFT_UPLOAD"
     tiktok_application_review_state: str = "DEVELOPMENT"
     tiktok_oauth_state_ttl_seconds: int = Field(default=600, ge=60, le=3600)

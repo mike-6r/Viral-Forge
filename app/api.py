@@ -12,6 +12,7 @@ from fastapi import (
     FastAPI,
     File,
     Form,
+    Header,
     HTTPException,
     Query,
     Request,
@@ -154,18 +155,28 @@ from app.ingestion.models import (
 from app.ingestion.service import change_source_status, submit_url
 from app.ingestion.storage import LocalFilesystemStorage
 from app.ingestion.upload import UploadError, UploadErrorCategory, submit_upload
+from app.manual_publishing.models import ManualAnalyticsCheckpoint, ManualPublication
+from app.manual_publishing.service import (
+    ManualPublicationError,
+    add_manual_metrics,
+    record_manual_publication,
+    update_checkpoint,
+)
 from app.media_preview.models import PreviewGrant
 from app.media_preview.service import (
     PreviewError,
     cleanup_expired_media,
     extend_retention,
     generate_proxy,
+    issue_full_quality_download,
     issue_preview,
     parse_range,
+    revoke_download_grants,
     revoke_grants,
     set_hold,
     storage_summary,
     stream_range,
+    validate_download_grant,
     validate_grant,
 )
 from app.operations.models import OperationsAlert, OperatorTask
@@ -1251,6 +1262,62 @@ class PreviewGrantRead(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ClipDownloadGrantRead(BaseModel):
+    id: uuid.UUID
+    clip_id: uuid.UUID
+    media_asset_id: uuid.UUID
+    expires_at: datetime
+    revoked_at: datetime | None
+    access_count: int
+    maximum_access_count: int | None
+    url: str | None = None
+    model_config = {"from_attributes": True}
+
+
+class ManualPublicationCreate(BaseModel):
+    clip_id: uuid.UUID
+    content_package_id: uuid.UUID
+    media_asset_id: uuid.UUID
+    platform: str = Field(pattern="^(TIKTOK|YOUTUBE|INSTAGRAM|FACEBOOK|OTHER)$")
+    destination_label: str = Field(min_length=1, max_length=255)
+    public_post_url: str = Field(min_length=8, max_length=2048)
+    published_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ManualPublicationRead(ManualPublicationCreate):
+    id: uuid.UUID
+    brand_id: uuid.UUID
+    project_id: uuid.UUID
+    content_package_version: int
+    recorded_by_id: uuid.UUID
+    analytics_eligibility: str
+    model_config = {"from_attributes": True}
+
+
+class ManualAnalyticsImport(AnalyticsSnapshotImport):
+    captured_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    profile_visits: int | None = Field(default=None, ge=0)
+    completion_rate: float | None = Field(default=None, ge=0, le=100)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
+class ManualAnalyticsRead(ManualAnalyticsImport):
+    id: uuid.UUID
+    manual_publication_id: uuid.UUID
+    clip_id: uuid.UUID
+    brand_id: uuid.UUID
+    provider: str
+    collection_source: str
+    model_config = {"from_attributes": True}
+
+
+class ManualAnalyticsCheckpointAction(BaseModel):
+    action: str = Field(pattern="^(COMPLETE|SKIP|SNOOZE)$")
+    snooze_hours: int | None = Field(default=None, ge=1, le=168)
+    notes: str | None = Field(default=None, max_length=2000)
+
+
 class RetentionAction(BaseModel):
     seconds: int = Field(default=86_400, ge=60, le=31_536_000)
 
@@ -1608,6 +1675,94 @@ def create_app() -> FastAPI:
             raise HTTPException(status_code=404, detail="production clip not found")
         require_record_brand(session, actor, clip)
         return {"revoked": revoke_grants(session, actor.id, clip)}
+
+    def _download_token(authorization: str | None) -> str | None:
+        prefix = "Bearer "
+        return authorization[len(prefix) :] if authorization and authorization.startswith(prefix) else None
+
+    def _download_filename(project: ProductionProject, clip: ProductionClip) -> str:
+        import re
+
+        title = re.sub(r"[^A-Za-z0-9._-]+", "-", project.source_title or "ViralForge-Clip").strip("-.")
+        return f"{title[:96] or 'ViralForge-Clip'}-Clip-{clip.clip_number:02d}.mp4"
+
+    @app.post("/api/v1/production/clips/{clip_id}/download", response_model=ClipDownloadGrantRead)
+    def create_clip_download(
+        clip_id: uuid.UUID,
+        content_package_id: uuid.UUID | None = None,
+        actor: Annotated[Actor, Depends(development_actor)] = None,  # type: ignore[assignment]
+        session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
+        storage: Annotated[LocalFilesystemStorage, Depends(get_production_storage)] = None,  # type: ignore[assignment]
+    ) -> ClipDownloadGrantRead:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        package = session.get(ContentPackage, content_package_id) if content_package_id else None
+        if package is not None and (package.clip_id != clip.id or package.brand_id != clip.brand_id):
+            raise HTTPException(status_code=409, detail="content package does not match clip")
+        try:
+            issued = issue_full_quality_download(session, actor.id, clip, storage, package)
+        except PreviewError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return ClipDownloadGrantRead.model_validate(issued.grant, from_attributes=True).model_copy(update={"url": issued.url})
+
+    @app.post("/api/v1/production/clips/{clip_id}/download/revoke")
+    def revoke_clip_downloads(
+        clip_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, int]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR)
+        clip = session.get(ProductionClip, clip_id)
+        if clip is None:
+            raise HTTPException(status_code=404, detail="production clip not found")
+        require_record_brand(session, actor, clip)
+        return {"revoked": revoke_download_grants(session, actor.id, clip)}
+
+    @app.get("/download/{grant_id}", response_class=HTMLResponse)
+    def browser_download_page(grant_id: uuid.UUID) -> HTMLResponse:
+        """The raw token stays in URL fragment, never in a server request or ordinary log."""
+        document = f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>ViralForge secure download</title><style>body{{margin:0;background:#101217;color:#edf0f5;font:16px system-ui,sans-serif}}main{{max-width:560px;margin:auto;padding:28px}}button{{background:#ff4d44;border:0;border-radius:9px;color:#fff;font-weight:700;padding:13px 16px}}.muted{{color:#b6c0d0}}pre{{white-space:pre-wrap}}</style><main><p class="muted">VIRALFORGE · SECURE DOWNLOAD</p><h1 id="title">Preparing full-quality download</h1><pre id="meta" class="muted"></pre><button id="download" disabled>Download Video</button><p class="muted">Save the MP4 to Files or your share sheet, then return to Discord to record a manual post. This link expires automatically.</p></main><script>const t=location.hash.slice(1), h={{Authorization:'Bearer '+t}}; const base='/api/v1/downloads/{grant_id}'; fetch(base+'/info',{{headers:h}}).then(r=>r.ok?r.json():Promise.reject()).then(x=>{{title.textContent=x.title;meta.textContent=`${{x.duration}} · ${{x.size}} · expires ${{x.expires_at}}`;download.disabled=false;download.onclick=()=>fetch(base+'/media',{{headers:h}}).then(r=>r.blob()).then(b=>{{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=x.filename;a.click();URL.revokeObjectURL(a.href)}})}}).catch(()=>{{title.textContent='This download link is unavailable or expired.'}})</script>'''
+        response = HTMLResponse(document)
+        response.headers.update({"Cache-Control": "private, no-store", "Referrer-Policy": "no-referrer", "X-Robots-Tag": "noindex, nofollow, noarchive", "Content-Security-Policy": "default-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"})
+        return response
+
+    @app.get("/api/v1/downloads/{grant_id}/info")
+    def download_info(
+        grant_id: uuid.UUID, authorization: Annotated[str | None, Header()] = None,
+        session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
+        storage: Annotated[LocalFilesystemStorage, Depends(get_production_storage)] = None,  # type: ignore[assignment]
+    ) -> dict[str, object]:
+        try:
+            grant, asset, clip, project = validate_download_grant(session, grant_id, _download_token(authorization))
+            size = storage.metadata(asset.storage_key).size_bytes
+        except (PreviewError, FileNotFoundError, ValueError) as error:
+            raise HTTPException(status_code=404, detail="download is unavailable") from error
+        return {"title": project.source_title or f"Clip {clip.clip_number}", "duration": f"{clip.duration_seconds:.1f} seconds", "size": f"{size / 1_048_576:.1f} MB", "expires_at": grant.expires_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC"), "filename": _download_filename(project, clip)}
+
+    @app.api_route("/api/v1/downloads/{grant_id}/media", methods=["GET", "HEAD"])
+    def download_media(
+        grant_id: uuid.UUID, request: Request, authorization: Annotated[str | None, Header()] = None,
+        session: Annotated[Session, Depends(get_session)] = None,  # type: ignore[assignment]
+        storage: Annotated[LocalFilesystemStorage, Depends(get_production_storage)] = None,  # type: ignore[assignment]
+    ) -> Response:
+        try:
+            _, asset, clip, project = validate_download_grant(session, grant_id, _download_token(authorization), count_access=request.method == "GET")
+            meta = storage.metadata(asset.storage_key)
+            byte_range = parse_range(request.headers.get("range"), meta.size_bytes)
+        except (PreviewError, FileNotFoundError, ValueError) as error:
+            if isinstance(error, PreviewError) and error.code == "INVALID_RANGE":
+                return Response(status_code=status.HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE, headers={"Content-Range": "bytes */0", "Cache-Control": "private, no-store"})
+            raise HTTPException(status_code=404, detail="download is unavailable") from error
+        start, end = byte_range if byte_range else (0, meta.size_bytes - 1)
+        headers = {"Accept-Ranges": "bytes", "Content-Length": str(end - start + 1), "Content-Disposition": f'attachment; filename="{_download_filename(project, clip)}"', "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"}
+        if byte_range:
+            headers["Content-Range"] = f"bytes {start}-{end}/{meta.size_bytes}"
+        if request.method == "HEAD":
+            return Response(status_code=status.HTTP_206_PARTIAL_CONTENT if byte_range else status.HTTP_200_OK, headers=headers, media_type=asset.content_type or "video/mp4")
+        return StreamingResponse(stream_range(storage.open(asset.storage_key), start, end, get_settings().preview_stream_chunk_bytes), status_code=status.HTTP_206_PARTIAL_CONTENT if byte_range else status.HTTP_200_OK, headers=headers, media_type=asset.content_type or "video/mp4")
 
     @app.get("/api/v1/media/storage-summary")
     def media_storage_summary(
@@ -4008,6 +4163,96 @@ def create_app() -> FastAPI:
         return persist_snapshot(
             session, request, NormalizedMetrics(**payload.model_dump()), "OPERATOR_IMPORT"
         )
+
+    @app.post("/api/v1/manual-publications", response_model=ManualPublicationRead, status_code=status.HTTP_201_CREATED)
+    def create_manual_publication(
+        payload: ManualPublicationCreate,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> ManualPublication:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER)
+        clip, package, asset = session.get(ProductionClip, payload.clip_id), session.get(ContentPackage, payload.content_package_id), session.get(MediaAsset, payload.media_asset_id)
+        if clip is None or package is None or asset is None:
+            raise HTTPException(status_code=404, detail="clip, content package, or media asset not found")
+        require_record_brand(session, actor, clip)
+        try:
+            return record_manual_publication(
+                session,
+                actor.id,
+                clip,
+                package,
+                asset,
+                **payload.model_dump(exclude={"clip_id", "content_package_id", "media_asset_id"}),
+            )
+        except ManualPublicationError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
+    @app.get("/api/v1/manual-publications", response_model=list[ManualPublicationRead])
+    def list_manual_publications(
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+        brand_id: uuid.UUID | None = None,
+    ) -> list[ManualPublication]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.EDITOR, RoleName.REVIEWER, RoleName.ANALYST)
+        brand = brand_for_actor(session, actor.id, actor.roles, brand_id)
+        return list(session.scalars(select(ManualPublication).where(ManualPublication.brand_id == brand.id).order_by(ManualPublication.published_at.desc()).limit(100)))
+
+    @app.post("/api/v1/manual-publications/{publication_id}/analytics", response_model=ManualAnalyticsRead, status_code=status.HTTP_201_CREATED)
+    def import_manual_analytics(
+        publication_id: uuid.UUID,
+        payload: ManualAnalyticsImport,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> PostAnalyticsSnapshot:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.ANALYST, RoleName.EDITOR)
+        publication = session.get(ManualPublication, publication_id)
+        if publication is None:
+            raise HTTPException(status_code=404, detail="manual publication not found")
+        require_record_brand(session, actor, publication)
+        values = payload.model_dump(exclude={"captured_at", "notes", "profile_visits", "completion_rate"})
+        values.update({"profile_visits": payload.profile_visits, "completion_rate": payload.completion_rate})
+        return add_manual_metrics(session, actor.id, publication, values, payload.captured_at, payload.notes)
+
+    @app.get("/api/v1/manual-publications/{publication_id}/checkpoints")
+    def list_manual_analytics_checkpoints(
+        publication_id: uuid.UUID,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> list[dict[str, object]]:
+        publication = session.get(ManualPublication, publication_id)
+        if publication is None:
+            raise HTTPException(status_code=404, detail="manual publication not found")
+        require_record_brand(session, actor, publication)
+        return [{"id": str(item.id), "checkpoint": item.checkpoint_key, "due_at": item.due_at, "status": item.status, "snoozed_until": item.snoozed_until} for item in session.scalars(select(ManualAnalyticsCheckpoint).where(ManualAnalyticsCheckpoint.manual_publication_id == publication.id).order_by(ManualAnalyticsCheckpoint.due_at))]
+
+    @app.post("/api/v1/manual-analytics-checkpoints/{checkpoint_id}")
+    def act_on_manual_analytics_checkpoint(
+        checkpoint_id: uuid.UUID,
+        payload: ManualAnalyticsCheckpointAction,
+        actor: Annotated[Actor, Depends(development_actor)],
+        session: Annotated[Session, Depends(get_session)],
+    ) -> dict[str, object]:
+        require_role(actor, RoleName.OWNER, RoleName.ADMIN, RoleName.ANALYST, RoleName.EDITOR)
+        checkpoint = session.get(ManualAnalyticsCheckpoint, checkpoint_id)
+        if checkpoint is None:
+            raise HTTPException(status_code=404, detail="manual analytics checkpoint not found")
+        require_record_brand(session, actor, checkpoint)
+        try:
+            updated = update_checkpoint(
+                session,
+                actor.id,
+                checkpoint,
+                payload.action,
+                payload.notes,
+                payload.snooze_hours,
+            )
+        except ManualPublicationError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return {
+            "id": str(updated.id),
+            "status": updated.status,
+            "snoozed_until": updated.snoozed_until,
+        }
 
     @app.post(
         "/api/v1/analytics/requests/{request_id}/feedback",

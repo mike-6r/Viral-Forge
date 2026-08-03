@@ -24,8 +24,9 @@ from app.accounts.models import User  # noqa: F401
 from app.audit.models import AuditEvent
 from app.common.config import Settings, get_settings
 from app.content.models import MediaAsset
+from app.content_packages.models import ContentPackage
 from app.ingestion.storage import LocalFilesystemStorage
-from app.media_preview.models import PreviewGrant
+from app.media_preview.models import ClipDownloadGrant, PreviewGrant
 from app.production.models import ProductionClip, ProductionProject
 from app.publishing.models import PublishRequest, PublishRequestStatus
 from app.sources.models import Source  # noqa: F401
@@ -46,6 +47,84 @@ class IssuedPreview:
     url: str
     raw_token: str
     reused: bool = False
+
+
+@dataclass(frozen=True)
+class IssuedDownload:
+    grant: ClipDownloadGrant
+    url: str
+    raw_token: str
+
+
+def _download_deadline(settings: Settings) -> datetime:
+    return _now() + timedelta(seconds=getattr(settings, "download_token_ttl_seconds", 900))
+
+
+def issue_full_quality_download(
+    session: Session,
+    actor_id: uuid.UUID,
+    clip: ProductionClip,
+    storage: LocalFilesystemStorage,
+    package: ContentPackage | None = None,
+    settings: Settings | None = None,
+) -> IssuedDownload:
+    """Issue a separate grant for the rendered asset; preview proxies are never eligible."""
+    settings = settings or get_settings()
+    if settings.environment.value == "production" and not settings.preview_public_base_url.startswith("https://"):
+        raise PreviewError("DOWNLOAD_HTTPS_REQUIRED", "full-quality downloads require the configured HTTPS hostname")
+    asset = ensure_clip_asset(session, clip, storage, settings)
+    if asset.asset_type != "RENDERED_CLIP" or asset.storage_key != clip.storage_key:
+        raise PreviewError("AUTHORITATIVE_ASSET_REQUIRED", "the authoritative rendered clip is unavailable")
+    if not storage.exists(asset.storage_key):
+        raise PreviewError("CLIP_NOT_AVAILABLE", "rendered media is unavailable")
+    raw_token = secrets.token_urlsafe(32)
+    grant = ClipDownloadGrant(
+        brand_id=clip.brand_id,
+        project_id=clip.project_id,
+        clip_id=clip.id,
+        media_asset_id=asset.id,
+        content_package_id=package.id if package else None,
+        token_hash=_token_digest(raw_token, settings),
+        created_by_id=actor_id,
+        expires_at=_download_deadline(settings),
+        maximum_access_count=getattr(settings, "download_maximum_access_count", 2),
+    )
+    session.add(grant)
+    session.flush()
+    session.add(AuditEvent(actor_id=actor_id, entity_type="clip_download_grant", entity_id=grant.id, brand_id=clip.brand_id, event_name="download.grant.created", payload={"clip_id": str(clip.id), "expires_at": grant.expires_at.isoformat()}))
+    session.commit()
+    # The fragment is never sent in an HTTP request or ordinary access log.
+    return IssuedDownload(grant, f"{settings.preview_public_base_url.rstrip('/')}/download/{grant.id}#{raw_token}", raw_token)
+
+
+def validate_download_grant(
+    session: Session, grant_id: uuid.UUID, raw_token: str | None, settings: Settings | None = None, *, count_access: bool = False
+) -> tuple[ClipDownloadGrant, MediaAsset, ProductionClip, ProductionProject]:
+    settings = settings or get_settings()
+    grant = session.get(ClipDownloadGrant, grant_id)
+    if grant is None or not raw_token or not hmac.compare_digest(grant.token_hash, _token_digest(raw_token, settings)):
+        raise PreviewError("INVALID_DOWNLOAD", "download is unavailable")
+    if grant.revoked_at is not None or grant.expires_at <= _now() or (grant.maximum_access_count is not None and grant.access_count >= grant.maximum_access_count):
+        raise PreviewError("EXPIRED_DOWNLOAD", "download is unavailable")
+    asset, clip, project = session.get(MediaAsset, grant.media_asset_id), session.get(ProductionClip, grant.clip_id), session.get(ProductionProject, grant.project_id)
+    if asset is None or clip is None or project is None or asset.asset_type != "RENDERED_CLIP" or asset.clip_id != clip.id or asset.brand_id != grant.brand_id or asset.lifecycle_state == "DELETED":
+        raise PreviewError("UNAVAILABLE_DOWNLOAD", "download is unavailable")
+    if count_access:
+        grant.access_count += 1
+        grant.last_accessed_at = asset.last_accessed_at = _now()
+        session.add(AuditEvent(actor_id=grant.created_by_id, entity_type="clip_download_grant", entity_id=grant.id, brand_id=grant.brand_id, event_name="download.grant.used", payload={"access_count": grant.access_count}))
+        session.commit()
+    return grant, asset, clip, project
+
+
+def revoke_download_grants(session: Session, actor_id: uuid.UUID, clip: ProductionClip) -> int:
+    grants = list(session.scalars(select(ClipDownloadGrant).where(ClipDownloadGrant.clip_id == clip.id, ClipDownloadGrant.revoked_at.is_(None))))
+    for grant in grants:
+        grant.revoked_at = _now()
+    if grants:
+        session.add(AuditEvent(actor_id=actor_id, entity_type="production_clip", entity_id=clip.id, brand_id=clip.brand_id, event_name="download.grants.revoked", payload={"count": len(grants)}))
+        session.commit()
+    return len(grants)
 
 
 @dataclass(frozen=True)
@@ -383,6 +462,17 @@ def retention_reason(
         .limit(1)
     )
     if active is not None:
+        return None
+    active_download = session.scalar(
+        select(ClipDownloadGrant.id)
+        .where(
+            ClipDownloadGrant.media_asset_id == asset.id,
+            ClipDownloadGrant.revoked_at.is_(None),
+            ClipDownloadGrant.expires_at > now,
+        )
+        .limit(1)
+    )
+    if active_download is not None:
         return None
     if asset.asset_type == "PREVIEW_PROXY":
         return "preview_proxy_expired"

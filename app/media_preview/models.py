@@ -40,3 +40,24 @@ class PreviewGrant(UUIDTimestampMixin, Base):
         Index("ix_preview_grants_active_lookup", "clip_id", "revoked_at", "expires_at"),
     )
     __mapper_args__ = {"version_id_col": version_id}
+
+
+class ClipDownloadGrant(UUIDTimestampMixin, Base):
+    """Short-lived, hashed-token access to the authoritative rendered clip only."""
+
+    __tablename__ = "clip_download_grants"
+    brand_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("brands.id"), index=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("production_projects.id"), index=True)
+    clip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("production_clips.id"), index=True)
+    media_asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("media_assets.id"), index=True)
+    content_package_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("content_packages.id"), index=True)
+    token_hash: Mapped[str] = mapped_column(String(128), unique=True)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    access_count: Mapped[int] = mapped_column(Integer, default=0)
+    maximum_access_count: Mapped[int | None] = mapped_column(Integer, default=1)
+    last_accessed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version_id: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    __table_args__ = (Index("ix_clip_download_grants_active", "clip_id", "revoked_at", "expires_at"),)
+    __mapper_args__ = {"version_id_col": version_id}

@@ -29,7 +29,8 @@ class PostAnalyticsSnapshot(UUIDTimestampMixin, Base):
     __tablename__ = "post_analytics_snapshots"
     __table_args__ = (UniqueConstraint("publish_request_id", "captured_at", name="uq_post_analytics_snapshot_time"),)
 
-    publish_request_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("publish_requests.id"), index=True)
+    publish_request_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("publish_requests.id"), index=True)
+    manual_publication_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("manual_publications.id"), index=True)
     clip_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("production_clips.id"), index=True)
     brand_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("brands.id"), index=True)
     provider: Mapped[str] = mapped_column(String(50), index=True)

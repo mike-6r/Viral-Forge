@@ -12,6 +12,7 @@ import app.corrections.models  # noqa: F401
 import app.discord_business.models  # noqa: F401
 import app.discovery.models  # noqa: F401
 import app.ingestion.models  # noqa: F401
+import app.manual_publishing.models  # noqa: F401
 import app.media_preview.models  # noqa: F401
 import app.moderation.models  # noqa: F401
 import app.operations.models  # noqa: F401

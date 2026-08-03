@@ -9,6 +9,7 @@ import shutil
 import uuid
 from collections.abc import Generator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import discord
@@ -60,7 +61,18 @@ from app.discord_business.service import BusinessRepository, load_config
 from app.discovery.models import DiscoveredMedia, DiscoveryRun, DiscoverySource, DiscoveryStatus
 from app.discovery.service import approve_media, reject_media, run_source
 from app.ingestion.storage import LocalFilesystemStorage
-from app.media_preview.service import IssuedPreview, PreviewError, issue_preview
+from app.manual_publishing.service import (
+    ManualPublicationError,
+    record_manual_publication,
+)
+from app.media_preview.service import (
+    IssuedDownload,
+    IssuedPreview,
+    PreviewError,
+    ensure_clip_asset,
+    issue_full_quality_download,
+    issue_preview,
+)
 from app.operations.models import OperationsAlert, OperationsReport, OperatorTask
 from app.operations.service import briefing as operations_briefing
 from app.operations.service import (
@@ -1513,6 +1525,73 @@ class ProductionRepository:
                 )
             except PreviewError as error:
                 raise ProductionError(error.code, str(error)) from error
+        finally:
+            session.close()
+
+    def create_full_quality_download(self, clip_id: uuid.UUID) -> IssuedDownload:
+        """Mint a short-lived mobile download grant for this one rendered clip."""
+        session = next(self._session())
+        try:
+            clip = session.get(ProductionClip, clip_id)
+            if clip is None:
+                raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
+            package = session.scalar(
+                select(ContentPackage)
+                .where(
+                    ContentPackage.clip_id == clip.id,
+                    ContentPackage.status == ContentPackageStatus.APPROVED,
+                )
+                .order_by(ContentPackage.review_version.desc())
+                .limit(1)
+            )
+            try:
+                return issue_full_quality_download(
+                    session,
+                    self._actor(session),
+                    clip,
+                    self._storage(),
+                    package,
+                    self.settings,
+                )
+            except PreviewError as error:
+                raise ProductionError(error.code, str(error)) from error
+        finally:
+            session.close()
+
+    def record_manual_post(
+        self,
+        package_id: uuid.UUID,
+        platform: str,
+        public_post_url: str,
+        destination_label: str,
+        notes: str | None = None,
+    ) -> str:
+        """Record an operator-completed post without calling any platform provider."""
+        session = next(self._session())
+        try:
+            package = session.get(ContentPackage, package_id)
+            if package is None:
+                raise ProductionError("CONTENT_PACKAGE_NOT_FOUND", "content package no longer exists")
+            clip = session.get(ProductionClip, package.clip_id)
+            if clip is None:
+                raise ProductionError("CLIP_NOT_FOUND", "clip no longer exists")
+            try:
+                asset = ensure_clip_asset(session, clip, self._storage(), self.settings)
+                publication = record_manual_publication(
+                    session,
+                    self._actor(session),
+                    clip,
+                    package,
+                    asset,
+                    platform=platform,
+                    destination_label=destination_label,
+                    public_post_url=public_post_url,
+                    published_at=datetime.now(UTC),
+                    notes=notes,
+                )
+            except (ManualPublicationError, PreviewError) as error:
+                raise ProductionError("MANUAL_POST_NOT_RECORDED", str(error)) from error
+            return str(publication.id)
         finally:
             session.close()
 
@@ -3242,6 +3321,46 @@ class ContentPackageEditModal(discord.ui.Modal):
         )
 
 
+class ManualPostModal(discord.ui.Modal, title="Record a manual post"):
+    platform: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
+        label="Platform", placeholder="TIKTOK, YOUTUBE, INSTAGRAM, FACEBOOK, or OTHER", max_length=20
+    )
+    post_url: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
+        label="Public post URL", placeholder="https://www.tiktok.com/@account/video/...", max_length=2048
+    )
+    destination: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
+        label="Destination/account label", placeholder="BodycamsDailyHQ", max_length=255
+    )
+    notes: discord.ui.TextInput[discord.ui.Modal] = discord.ui.TextInput(
+        label="Notes (optional)", required=False, style=discord.TextStyle.paragraph, max_length=2000
+    )
+
+    def __init__(self, package_id: uuid.UUID, repository: ProductionRepository) -> None:
+        super().__init__()
+        self.package_id, self.repository = package_id, repository
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        try:
+            publication_id = await asyncio.to_thread(
+                self.repository.record_manual_post,
+                self.package_id,
+                str(self.platform).upper(),
+                str(self.post_url),
+                str(self.destination),
+                str(self.notes) or None,
+            )
+        except ProductionError as error:
+            await interaction.edit_original_response(content=user_error(error))
+            return
+        await interaction.edit_original_response(
+            content=(
+                "Manual post recorded. ViralForge did not upload anything or call a platform API. "
+                f"Analytics checkpoints are now scheduled for this post (`{publication_id}`)."
+            )
+        )
+
+
 class ContentPackagePlatformSelect(discord.ui.Select["ContentPackageReviewView"]):
     def __init__(self, package_id: uuid.UUID, selected: str) -> None:
         options = [
@@ -3287,6 +3406,7 @@ class ContentPackageReviewView(discord.ui.View):
         self.add_item(ContentPackagePlatformSelect(package.id, self.platform_field))
         self.approve_button.disabled = package.status != ContentPackageStatus.PENDING
         self.reject_button.disabled = package.status != ContentPackageStatus.PENDING
+        self.record_manual_post_button.disabled = package.status != ContentPackageStatus.APPROVED
 
     async def _authorized(self, interaction: discord.Interaction) -> bool:
         if not isinstance(interaction.user, discord.Member) or not is_authorized(
@@ -3335,6 +3455,7 @@ class ContentPackageReviewView(discord.ui.View):
             return
         self.approve_button.disabled = True
         self.reject_button.disabled = True
+        self.record_manual_post_button.disabled = False
         await interaction.response.edit_message(
             embed=content_package_embed(package, self.platform_field), view=self
         )
@@ -3363,6 +3484,23 @@ class ContentPackageReviewView(discord.ui.View):
         await interaction.response.edit_message(
             embed=content_package_embed(package, self.platform_field), view=self
         )
+
+    @discord.ui.button(label="Record Manual Post", style=discord.ButtonStyle.primary, row=1)
+    async def record_manual_post_button(
+        self,
+        interaction: discord.Interaction,
+        _: discord.ui.Button["ContentPackageReviewView"],
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        package = await asyncio.to_thread(self.repository.content_package_by_id, self.package_id)
+        if package is None or package.status != ContentPackageStatus.APPROVED:
+            await interaction.response.send_message(
+                "Approve this content package before recording a manual public post.",
+                ephemeral=True,
+            )
+            return
+        await interaction.response.send_modal(ManualPostModal(package.id, self.repository))
 
 
 class OpportunityReviewView(discord.ui.View):
@@ -3692,6 +3830,38 @@ class ClipReviewView(discord.ui.View):
         )
         await interaction.response.send_message(
             f"Private preview link refreshed. Expires {issued.grant.expires_at.strftime('%Y-%m-%d %H:%M UTC')}. It is not stored as a raw token.",
+            view=view,
+            ephemeral=True,
+        )
+
+    @discord.ui.button(
+        label="Download Full Quality",
+        style=discord.ButtonStyle.primary,
+        custom_id="viralforge:clip:download-full-quality",
+    )
+    async def download_full_quality(
+        self, interaction: discord.Interaction, _: discord.ui.Button["ClipReviewView"]
+    ) -> None:
+        if not await self._authorized(interaction):
+            return
+        try:
+            issued = await asyncio.to_thread(
+                self.repository.create_full_quality_download, self.state.clip.id
+            )
+        except ProductionError as error:
+            await interaction.response.send_message(user_error(error), ephemeral=True)
+            return
+        view = discord.ui.View(timeout=600)
+        view.add_item(
+            discord.ui.Button(
+                label="Open Secure Download",
+                style=discord.ButtonStyle.link,
+                url=issued.url,
+            )
+        )
+        await interaction.response.send_message(
+            "Full-quality MP4 link created. It expires shortly and is limited to this rendered "
+            "clip; save it to your phone, then return here to record the public post URL.",
             view=view,
             ephemeral=True,
         )
@@ -5248,7 +5418,7 @@ class ContentReadySetupView(discord.ui.View):
             )
         await interaction.response.send_message(message, ephemeral=True)
 
-    @discord.ui.button(label="Find Videos", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="Find Content Now", style=discord.ButtonStyle.secondary)
     async def find(
         self, interaction: discord.Interaction, _: discord.ui.Button["ContentReadySetupView"]
     ) -> None:

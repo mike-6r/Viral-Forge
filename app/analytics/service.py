@@ -14,6 +14,7 @@ from app.audit.models import AuditEvent
 from app.brands.models import DestinationAccount
 from app.common.config import Settings, get_settings
 from app.content_packages.models import ContentPackage
+from app.manual_publishing.models import ManualPublication
 from app.production.models import ProductionClip, ProductionProject
 from app.publishing.models import PublishRequest, PublishRequestStatus
 from app.publishing.service import EnvironmentCredentialResolver, PublishingError
@@ -138,17 +139,48 @@ def dashboard(session: Session, brand_id: uuid.UUID) -> AnalyticsDashboard:
     snapshots = list(session.scalars(select(PostAnalyticsSnapshot).where(PostAnalyticsSnapshot.brand_id == brand_id).order_by(PostAnalyticsSnapshot.captured_at.desc())))
     latest: dict[uuid.UUID, PostAnalyticsSnapshot] = {}
     for snapshot in snapshots:
-        latest.setdefault(snapshot.publish_request_id, snapshot)
+        parent_id = snapshot.publish_request_id or snapshot.manual_publication_id
+        if parent_id is not None:
+            latest.setdefault(parent_id, snapshot)
     rows = list(latest.values())
     total_views = sum(item.views or 0 for item in rows)
     average_retention = sum(item.retention_percentage or 0 for item in rows) / len([item for item in rows if item.retention_percentage is not None]) if any(item.retention_percentage is not None for item in rows) else None
     groups: dict[str, dict[str, dict[str, float | int]]] = {key: {} for key in ("source", "topic", "duration", "hook", "posting_time")}
     for item in rows:
-        request, clip = session.get(PublishRequest, item.publish_request_id), session.get(ProductionClip, item.clip_id)
-        if request is None or clip is None:
+        request = (
+            session.get(PublishRequest, item.publish_request_id)
+            if item.publish_request_id
+            else None
+        )
+        manual = (
+            session.get(ManualPublication, item.manual_publication_id)
+            if item.manual_publication_id
+            else None
+        )
+        clip = session.get(ProductionClip, item.clip_id)
+        if clip is None or (request is None and manual is None):
             continue
-        project, package = session.get(ProductionProject, clip.project_id), session.get(ContentPackage, request.content_package_id)
-        values = {"source": project.source_channel if project else None, "topic": package.content_category if package else None, "duration": f"{int(clip.duration_seconds // 15) * 15}-{int(clip.duration_seconds // 15) * 15 + 14}s", "hook": str((package.fields_json if package else {}).get("primary_hook", "Unlabeled"))[:80], "posting_time": (request.confirmed_at or request.created_at.isoformat())[11:13] + ":00"}
+        project = session.get(ProductionProject, clip.project_id)
+        if request is not None:
+            package_id = request.content_package_id
+            published_at = request.confirmed_at or request.created_at
+        else:
+            assert manual is not None
+            package_id = manual.content_package_id
+            published_at = manual.published_at
+        package = session.get(ContentPackage, package_id)
+        published_hour = (
+            published_at.isoformat()[11:13] + ":00"
+            if isinstance(published_at, datetime)
+            else "Unknown"
+        )
+        values = {
+            "source": project.source_channel if project else None,
+            "topic": package.content_category if package else None,
+            "duration": f"{int(clip.duration_seconds // 15) * 15}-{int(clip.duration_seconds // 15) * 15 + 14}s",
+            "hook": str((package.fields_json if package else {}).get("primary_hook", "Unlabeled"))[:80],
+            "posting_time": published_hour,
+        }
         for key, value in values.items():
             label = value or "Unknown"
             bucket = groups[key].setdefault(label, {"posts": 0, "views": 0})

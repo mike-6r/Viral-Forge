@@ -28,9 +28,9 @@ def test_initial_migration_is_self_contained_and_explicit():
     assert "contentstatus" in source
 
 
-def test_migration_history_has_one_autopilot_policy_scheduling_head():
+def test_migration_history_has_one_manual_publish_mobile_download_head():
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["0032_autopilot_policy_scheduling"]
+    assert heads == ["0033_manual_publish_mobile_download"]
 
 
 def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path):
@@ -55,6 +55,9 @@ def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path)
     assert "operations_alerts" in inspector.get_table_names()
     assert "operator_tasks" in inspector.get_table_names()
     assert "operations_reports" in inspector.get_table_names()
+    assert "clip_download_grants" in inspector.get_table_names()
+    assert "manual_publications" in inspector.get_table_names()
+    assert "manual_analytics_checkpoints" in inspector.get_table_names()
 
 
 def test_schema_hardening_indexes_nullability_and_foreign_keys(tmp_path: Path):
@@ -89,6 +92,11 @@ def test_schema_hardening_indexes_nullability_and_foreign_keys(tmp_path: Path):
         for item in inspector.get_foreign_keys("production_projects")
     }
     assert selected_source_foreign_keys[("selected_source_id",)] == "production_sources"
+    snapshot_columns = {
+        column["name"]: column for column in inspector.get_columns("post_analytics_snapshots")
+    }
+    assert snapshot_columns["publish_request_id"]["nullable"] is True
+    assert "manual_publication_id" in snapshot_columns
     # Exercise the new forward-only TikTok revision independently before the
     # longer base cycle below; existing publishing rows must remain untouched.
     command.downgrade(config, "0024_download_progress")

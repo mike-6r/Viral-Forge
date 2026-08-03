@@ -427,7 +427,7 @@ def test_content_package_review_view_exposes_platform_selection_and_evidence():
     repository = ProductionRepository(Settings())
     view = ContentPackageReviewView(package, repository, Settings(discord_allowed_role_ids="1"))
     embed = content_package_embed(package)
-    assert len(view.children) == 4
+    assert len(view.children) == 5
     assert "Persisted transcript statement" in " ".join(field.value for field in embed.fields)
     assert "Sensitive-content review" in [field.name for field in embed.fields]
 
