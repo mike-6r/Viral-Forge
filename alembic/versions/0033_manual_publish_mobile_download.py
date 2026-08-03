@@ -1,6 +1,6 @@
 """Add secure full-quality downloads and operator-recorded manual publishing.
 
-Revision ID: 0033_manual_publish_mobile_download
+Revision ID: 0033_manual_publish_download
 Revises: 0032_autopilot_policy_scheduling
 """
 
@@ -9,7 +9,7 @@ from sqlalchemy.dialects import postgresql
 
 from alembic import op
 
-revision = "0033_manual_publish_mobile_download"
+revision = "0033_manual_publish_download"
 down_revision = "0032_autopilot_policy_scheduling"
 branch_labels = None
 depends_on = None

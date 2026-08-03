@@ -30,7 +30,7 @@ def test_initial_migration_is_self_contained_and_explicit():
 
 def test_migration_history_has_one_manual_publish_mobile_download_head():
     heads = ScriptDirectory.from_config(Config("alembic.ini")).get_heads()
-    assert heads == ["0033_manual_publish_mobile_download"]
+    assert heads == ["0033_manual_publish_download"]
 
 
 def test_migration_upgrade_downgrade_reupgrade_and_schema_parity(tmp_path: Path):
