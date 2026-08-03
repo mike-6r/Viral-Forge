@@ -5,17 +5,20 @@ It deliberately does not create publish requests or submit content to providers.
 """
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Select
 
 from app.brands.models import Brand, ContentProfile, DestinationAccount
-from app.content_packages.models import ContentPackage
+from app.content_packages.models import ContentPackage, ContentPackageStatus
 from app.discovery.models import DiscoveredMedia, DiscoveryStatus
 from app.operations.models import OperationsAlert, OperationsReport, OperatorTask
+from app.opportunities.models import ClipOpportunity, OpportunityReviewStatus
 from app.production.models import PostingQueueItem, ProductionClip, ProductionProject
 
 
@@ -33,6 +36,95 @@ def _integer(value: object, default: int) -> int:
 
 def _object_list(value: object) -> list[object]:
     return list(value) if isinstance(value, list) else []
+
+
+@dataclass(frozen=True)
+class ReviewInboxItem:
+    """One operator decision that `/viralforge review` can actually open.
+
+    Queue-ready posts are intentionally absent: they are already approved
+    creative work awaiting a separate, explicit publishing decision.
+    """
+
+    kind: str
+    id: uuid.UUID
+
+
+def _review_inbox_queries(brand_id: uuid.UUID) -> list[tuple[str, Select[tuple[uuid.UUID]]]]:
+    """Keep review predicates in one place for Operations and Discord.
+
+    The order is the operator workflow order and is also the priority used by
+    the Discord review command.
+    """
+    return [
+        (
+            "SOURCE",
+            select(ProductionProject.id)
+            .where(
+                ProductionProject.brand_id == brand_id,
+                ProductionProject.status == "SOURCE_REVIEW_REQUIRED",
+            )
+            .order_by(ProductionProject.created_at),
+        ),
+        (
+            "OPPORTUNITY",
+            select(ClipOpportunity.id)
+            .where(
+                ClipOpportunity.brand_id == brand_id,
+                ClipOpportunity.review_status == OpportunityReviewStatus.PENDING,
+            )
+            .order_by(ClipOpportunity.created_at),
+        ),
+        (
+            "CLIP",
+            select(ProductionClip.id)
+            .where(
+                ProductionClip.brand_id == brand_id,
+                ProductionClip.render_status == "SUCCEEDED",
+                ProductionClip.approval_status == "PENDING",
+            )
+            .order_by(ProductionClip.created_at),
+        ),
+        (
+            "CONTENT_PACKAGE",
+            select(ContentPackage.id)
+            .where(
+                ContentPackage.brand_id == brand_id,
+                ContentPackage.status == ContentPackageStatus.PENDING,
+            )
+            .order_by(ContentPackage.created_at),
+        ),
+        (
+            "DISCOVERY",
+            select(DiscoveredMedia.id)
+            .where(
+                DiscoveredMedia.brand_id == brand_id,
+                DiscoveredMedia.lifecycle_status == DiscoveryStatus.NEEDS_REVIEW,
+            )
+            .order_by(DiscoveredMedia.discovered_at),
+        ),
+    ]
+
+
+def next_review_item(session: Session, brand_id: uuid.UUID) -> ReviewInboxItem | None:
+    """Return the same next decision that Operations counts as reviewable."""
+    for kind, statement in _review_inbox_queries(brand_id):
+        item_id = session.scalar(statement.limit(1))
+        if item_id is not None:
+            return ReviewInboxItem(kind=kind, id=item_id)
+    return None
+
+
+def review_inbox_counts(session: Session, brand_id: uuid.UUID) -> dict[str, int]:
+    """Return brand-scoped counts for items the review command can open."""
+    counts: dict[str, int] = {}
+    for kind, statement in _review_inbox_queries(brand_id):
+        total = session.scalar(
+            select(func.count()).select_from(statement.order_by(None).subquery())
+        )
+        counts[kind.lower()] = int(total or 0)
+    counts["total"] = sum(counts.values())
+    return counts
 
 
 def schedule_for(session: Session, brand_id: uuid.UUID) -> dict[str, object]:
@@ -118,30 +210,12 @@ def queue_metrics(session: Session, brand_id: uuid.UUID) -> dict[str, object]:
 
 def health_summary(session: Session, brand_id: uuid.UUID) -> dict[str, object]:
     queue = queue_metrics(session, brand_id)
+    review = review_inbox_counts(session, brand_id)
     destinations = _count(
         session,
         select(func.count())
         .select_from(DestinationAccount)
         .where(DestinationAccount.brand_id == brand_id, DestinationAccount.is_active),
-    )
-    source_review = _count(
-        session,
-        select(func.count())
-        .select_from(DiscoveredMedia)
-        .where(
-            DiscoveredMedia.brand_id == brand_id,
-            DiscoveredMedia.lifecycle_status == DiscoveryStatus.NEEDS_REVIEW,
-        ),
-    )
-    clip_review = _count(
-        session,
-        select(func.count())
-        .select_from(ProductionClip)
-        .where(
-            ProductionClip.brand_id == brand_id,
-            ProductionClip.approval_status == "PENDING",
-            ProductionClip.render_status == "SUCCEEDED",
-        ),
     )
     score = 100
     score -= min(40, _integer(queue["failed"], 0) * 20)
@@ -152,7 +226,8 @@ def health_summary(session: Session, brand_id: uuid.UUID) -> dict[str, object]:
         "score": max(0, score),
         "state": state,
         "queue": queue,
-        "review_items": source_review + clip_review,
+        "review": review,
+        "review_items": review["total"],
         "connected_destinations": destinations,
     }
 
@@ -163,8 +238,28 @@ def briefing(session: Session, brand_id: uuid.UUID, at: datetime | None = None) 
     found = _count(session, select(func.count()).select_from(DiscoveredMedia).where(DiscoveredMedia.brand_id == brand_id, DiscoveredMedia.created_at >= since))
     rendered = _count(session, select(func.count()).select_from(ProductionClip).where(ProductionClip.brand_id == brand_id, ProductionClip.render_status == "SUCCEEDED", ProductionClip.created_at >= since))
     ready = _count(session, select(func.count()).select_from(ContentPackage).where(ContentPackage.brand_id == brand_id, ContentPackage.status == "APPROVED", ContentPackage.created_at >= since))
-    tasks = list(session.scalars(select(OperatorTask).where(OperatorTask.brand_id == brand_id, OperatorTask.status == "OPEN").order_by(OperatorTask.priority.desc()).limit(3)))
-    return {"period_start": since.isoformat(), "videos_found": found, "rendered": rendered, "content_ready": ready, "health": health_summary(session, brand_id), "attention": tasks}
+    health = health_summary(session, brand_id)
+    tasks = list(
+        session.scalars(
+            select(OperatorTask)
+            .where(OperatorTask.brand_id == brand_id, OperatorTask.status == "OPEN")
+            .order_by(OperatorTask.priority.desc())
+            .limit(3)
+        )
+    )
+    # A scheduled refresh closes stale tasks. This guard also prevents a
+    # historical task from being shown as current between a decision and the
+    # next scheduler tick.
+    if not health["review_items"]:
+        tasks = [task for task in tasks if task.task_type != "REVIEW_CONTENT"]
+    return {
+        "period_start": since.isoformat(),
+        "videos_found": found,
+        "rendered": rendered,
+        "content_ready": ready,
+        "health": health,
+        "attention": tasks,
+    }
 
 
 def evening_report(session: Session, brand_id: uuid.UUID, at: datetime | None = None) -> dict[str, object]:
@@ -270,6 +365,26 @@ def _open_task(session: Session, brand_id: uuid.UUID, task_type: str, title: str
     existing = session.scalar(select(OperatorTask).where(OperatorTask.brand_id == brand_id, OperatorTask.dedupe_key == key, OperatorTask.status == "OPEN"))
     if existing is None:
         session.add(OperatorTask(brand_id=brand_id, priority=priority, task_type=task_type, dedupe_key=key, title=title, reason=reason, action_label=action))
+        return
+    # The task remains one grouped work item, but must describe the current
+    # pending work rather than an old scheduler observation.
+    existing.priority = priority
+    existing.title = title
+    existing.reason = reason
+    existing.action_label = action
+
+
+def _complete_task(session: Session, brand_id: uuid.UUID, task_type: str) -> None:
+    task = session.scalar(
+        select(OperatorTask).where(
+            OperatorTask.brand_id == brand_id,
+            OperatorTask.dedupe_key == task_type.lower(),
+            OperatorTask.status == "OPEN",
+        )
+    )
+    if task is not None:
+        task.status = "COMPLETED"
+        task.completed_at = now()
 
 
 def refresh_operational_state(session: Session, brand_id: uuid.UUID) -> dict[str, object]:
@@ -277,6 +392,8 @@ def refresh_operational_state(session: Session, brand_id: uuid.UUID) -> dict[str
     health = health_summary(session, brand_id)
     if health["review_items"]:
         _open_task(session, brand_id, "REVIEW_CONTENT", "Review content", f"{health['review_items']} item(s) need a creative decision.", "Review Content", "HIGH")
+    else:
+        _complete_task(session, brand_id, "REVIEW_CONTENT")
     if health["queue"]["failed"]:  # type: ignore[index]
         _open_task(session, brand_id, "RETRY_FAILED", "Review failed processing", "One or more projects failed processing.", "Review Failures", "HIGH")
     if not health["connected_destinations"]:

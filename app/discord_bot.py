@@ -74,6 +74,12 @@ from app.media_preview.service import (
     issue_preview,
 )
 from app.operations.models import OperationsAlert, OperationsReport, OperatorTask
+from app.operations.service import (
+    ReviewInboxItem,
+    mark_report_delivered,
+    pending_reports,
+    refresh_operational_state,
+)
 from app.operations.service import briefing as operations_briefing
 from app.operations.service import (
     evening_report as operations_evening_report,
@@ -81,11 +87,7 @@ from app.operations.service import (
 from app.operations.service import (
     health_summary as operations_health_summary,
 )
-from app.operations.service import (
-    mark_report_delivered,
-    pending_reports,
-    refresh_operational_state,
-)
+from app.operations.service import next_review_item as operations_next_review_item
 from app.operations.service import (
     queue_metrics as operations_queue_metrics,
 )
@@ -1298,6 +1300,9 @@ class ProductionRepository:
         session = next(self._session())
         try:
             brand = self._default_brand_in_session(session)
+            # Keep live Operations tasks synchronized with the same review
+            # inbox used by the slash command.
+            refresh_operational_state(session, brand.id)
             briefing = operations_briefing(session, brand.id)
             return {
                 "brand": brand.name,
@@ -1384,6 +1389,15 @@ class ProductionRepository:
         finally:
             session.close()
         return self.review_state(clip_id) if clip_id else None
+
+    def next_review_item(self) -> ReviewInboxItem | None:
+        """Return the next item from Operations' authoritative review inbox."""
+        session = next(self._session())
+        try:
+            brand = self._default_brand_in_session(session)
+            return operations_next_review_item(session, brand.id)
+        finally:
+            session.close()
 
     def first_pending_clip_for_project(self, project_id: uuid.UUID) -> ReviewState | None:
         """Return a pending rendered clip for the project already on screen."""
@@ -5715,6 +5729,15 @@ def operations_embed(summary: dict[str, object]) -> discord.Embed:
     )
     embed.add_field(name="Brand health", value=f"{health['state']} · {health['score']}/100")
     embed.add_field(name="Queue health", value=f"{queue['health']} · {queue['ready']} ready")
+    review_items = int(health.get("review_items", 0))
+    embed.add_field(
+        name="Creative review",
+        value=(
+            f"{review_items} decision{'s' if review_items != 1 else ''} pending"
+            if review_items
+            else "No creative decisions pending"
+        ),
+    )
     embed.add_field(
         name="Since yesterday",
         value=f"{briefing['videos_found']} found · {briefing['rendered']} rendered · {briefing['content_ready']} content-ready",
@@ -5736,7 +5759,13 @@ def operations_embed(summary: dict[str, object]) -> discord.Embed:
         embed.add_field(
             name="Alerts", value="\n".join(f"• {alert.summary}" for alert in alerts), inline=False
         )
-    embed.set_footer(text="Use /viralforge review for the next creative decision")
+    embed.set_footer(
+        text=(
+            "Use /viralforge review for the next creative decision"
+            if review_items
+            else "No creative decisions are pending"
+        )
+    )
     return embed
 
 
@@ -6071,39 +6100,55 @@ class ViralForgeBot(discord.Client):
                     ephemeral=True,
                 )
                 return
-            source_review = await asyncio.to_thread(
-                self.repository.projects, "SOURCE_REVIEW_REQUIRED"
-            )
-            if source_review:
-                state = await asyncio.to_thread(self.repository.dashboard, source_review[0].id)
+            review_item = await asyncio.to_thread(self.repository.next_review_item)
+            if review_item is None:
+                await interaction.response.send_message(
+                    "Nothing needs a creative decision right now.", ephemeral=True
+                )
+                return
+            if review_item.kind == "SOURCE":
+                state = await asyncio.to_thread(self.repository.dashboard, review_item.id)
                 await interaction.response.send_message(
                     embed=guided_project_embed(state),
                     view=GuidedProjectView(state.project.id, self.repository, self.settings),
                     ephemeral=True,
                 )
                 return
-            opportunity = await asyncio.to_thread(self.repository.first_pending_opportunity)
-            if opportunity is not None:
+            if review_item.kind == "OPPORTUNITY":
+                opportunity = await asyncio.to_thread(
+                    self.repository.opportunity_state, review_item.id
+                )
                 await interaction.response.send_message(
                     embed=opportunity_embed(opportunity),
                     view=OpportunityReviewView(opportunity, self.repository, self.settings),
                     ephemeral=True,
                 )
                 return
-            clip = await asyncio.to_thread(self.repository.first_pending_clip)
-            if clip is not None:
+            if review_item.kind == "CLIP":
+                clip = await asyncio.to_thread(self.repository.review_state, review_item.id)
                 await interaction.response.send_message(
                     embed=clip_embed(clip.clip, clip.total),
                     view=ClipReviewView(clip, self.repository, self.settings),
                     ephemeral=True,
                 )
                 return
-            discovery = await asyncio.to_thread(self.discovery_repository.discovery_queue)
-            if discovery:
+            if review_item.kind == "CONTENT_PACKAGE":
+                package = await asyncio.to_thread(
+                    self.repository.content_package_by_id, review_item.id
+                )
+                if package is not None:
+                    await interaction.response.send_message(
+                        embed=content_package_embed(package),
+                        view=ContentPackageReviewView(package, self.repository, self.settings),
+                        ephemeral=True,
+                    )
+                    return
+            if review_item.kind == "DISCOVERY":
+                discovery = await asyncio.to_thread(self.discovery_repository.media, review_item.id)
                 await interaction.response.send_message(
-                    embed=discovery_embed(discovery[0]),
+                    embed=discovery_embed(discovery),
                     view=DiscoveryReviewView(
-                        discovery[0], self.discovery_repository, self.settings
+                        discovery, self.discovery_repository, self.settings
                     ),
                     ephemeral=True,
                 )
