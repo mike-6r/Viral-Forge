@@ -1,0 +1,9 @@
+# Use with docker-compose.yml and docker-compose.prod.yml when Apache already
+# owns public ports 80/443. Caddy is then an internal streaming proxy only.
+services:
+  caddy:
+    ports: !override ["127.0.0.1:${VIRALFORGE_INTERNAL_PROXY_PORT:-8081}:80"]
+    volumes: !override
+      - ./Caddyfile.apache-proxy.example:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config

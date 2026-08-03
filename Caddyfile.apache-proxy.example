@@ -1,0 +1,22 @@
+# Apache owns the public HTTPS endpoint and proxies only to this internal Caddy
+# listener. Do not publish this listener beyond 127.0.0.1.
+:80 {
+    encode zstd gzip
+    request_body {
+        max_size 110MB
+    }
+    header {
+        -Server
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        Cache-Control "no-store"
+    }
+    reverse_proxy api:8000 {
+        flush_interval -1
+        transport http {
+            read_timeout 20m
+            write_timeout 20m
+        }
+    }
+}
