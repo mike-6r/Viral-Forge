@@ -5,6 +5,7 @@ from sqlalchemy import inspect
 from app.discord_bot import friendly_project_status
 from app.discord_business.discord import (
     LEGACY_MANAGED_CHANNEL_NAMES,
+    PanelActionButton,
     _panel_embeds,
     _private_ticket_embed,
     _private_ticket_embeds,
@@ -112,7 +113,6 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
     assert hero_panels == {
         "welcome",
         "choose_roles",
-        "announcements",
         "product_overview",
         "how_it_works",
         "pricing",
@@ -121,12 +121,10 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
         "analytics",
         "support",
         "ops_center",
-        "ready_to_post",
     }
     assert {
         "welcome": "viralforge-welcome-hero.png",
         "choose_roles": "viralforge-access-hero.png",
-        "announcements": "viralforge-announcements-hero.png",
         "product_overview": "viralforge-workflow-hero.png",
         "how_it_works": "viralforge-workflow-hero.png",
         "pricing": "viralforge-plans-hero.png",
@@ -135,7 +133,6 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
         "analytics": "viralforge-analytics-hero.png",
         "support": "viralforge-support-hero.png",
         "ops_center": "viralforge-ops-center-hero.png",
-        "ready_to_post": "viralforge-ready-to-post-hero.png",
     } == {
         key: panel["asset"]
         for key, panel in config["embeds"]["embeds"].items()
@@ -158,7 +155,6 @@ def test_major_landing_panels_publish_image_only_hero_before_compact_content_car
     expected = {
         "welcome",
         "choose_roles",
-        "announcements",
         "product_overview",
         "how_it_works",
         "pricing",
@@ -167,7 +163,6 @@ def test_major_landing_panels_publish_image_only_hero_before_compact_content_car
         "analytics",
         "support",
         "ops_center",
-        "ready_to_post",
     }
     for key in expected:
         assert panels[key]["layout"] == "hero_then_content"
@@ -180,8 +175,69 @@ def test_major_landing_panels_publish_image_only_hero_before_compact_content_car
         assert hero.thumbnail.url is None
         assert hero.image.url == f"attachment://{panels[key]['asset']}"
         assert content.image.url is None
+        assert content.footer.text is None
+        assert content.author.name is None
         assert len(content.fields) <= 3
         assert all(field.inline for field in content.fields)
+
+
+def test_discord_landing_cards_are_compact_and_follow_the_product_action_order():
+    config = load_config(Path("config/discord"))
+    panels = config["embeds"]["embeds"]
+    expected_copy = {
+        "welcome": ("ViralForge", "**PLATFORM**", ["Submit", "Review", "Decide"]),
+        "product_overview": (
+            "One Content Workflow",
+            "**PLATFORM**",
+            ["Source", "Review", "Decision"],
+        ),
+        "how_it_works": (
+            "Discover → Clip → Review → Decide",
+            "**WORKFLOW**",
+            ["Discover", "Clip", "Decide"],
+        ),
+        "choose_roles": ("Set Up Access", "**ACCESS**", ["Account", "Alerts", "Workspace"]),
+        "pricing": ("Operating Levels", "**PLANS**", ["Creator", "Agency", "Enterprise"]),
+        "support": ("Open the Right Request", "**SUPPORT**", ["Access", "Workflow", "Issues"]),
+        "ops_center": ("Operations Center", "**OPERATIONS**", ["Attention", "Queue", "Support"]),
+    }
+    for key, (title, eyebrow, field_names) in expected_copy.items():
+        panel = panels[key]
+        assert panel["title"] == title
+        assert panel["description"].startswith(eyebrow)
+        assert [field["name"] for field in panel["fields"]] == field_names
+        assert len(panel["fields"]) == 3
+        assert not panel["show_footer"]
+
+    assert panels["welcome"]["actions"] == ["choose_role", "how_it_works", "open_support"]
+    assert panels["product_overview"]["actions"] == [
+        "start_onboarding",
+        "how_it_works",
+        "view_pricing",
+    ]
+    assert panels["ops_center"]["actions"] == [
+        "open_review_queue",
+        "ready_to_post",
+        "add_video",
+        "open_tickets",
+        "refresh",
+    ]
+    assert panels["announcements"]["layout"] == "compact"
+    assert panels["ready_to_post"]["layout"] == "compact"
+
+
+def test_panel_buttons_have_one_clear_primary_action_per_product_flow():
+    primary = PanelActionButton("welcome", "choose_role")
+    secondary = PanelActionButton("welcome", "open_support")
+    support_primary = PanelActionButton("support", "open_ticket")
+    operations_primary = PanelActionButton("ops_center", "open_review_queue")
+    operations_secondary = PanelActionButton("ops_center", "refresh")
+
+    assert primary.style.value == 1
+    assert secondary.style.value == 2
+    assert support_primary.style.value == 1
+    assert operations_primary.style.value == 1
+    assert operations_secondary.style.value == 2
 
 
 def test_discord_saas_polish_has_clean_categories_and_twenty_channels():

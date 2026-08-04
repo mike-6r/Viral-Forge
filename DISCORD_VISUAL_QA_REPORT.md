@@ -19,13 +19,14 @@ No live Discord resource was created, changed, or deleted by this QA pass.
 - Human-readable workflow labels: **Source Added**, **Preparing Video**,
   **Ready for Review**, **Clips Ready**, **Content Package Ready**, **Ready for
   Decision**, **Published**, and **Needs Attention**.
-- The supplied final Discord-native hero banner set is mapped to welcome,
-  access, announcements, overview/how-it-works, plans, workspace, review,
-  analytics, support, Operations, ready-for-decision, and private-ticket
-  panels. Panel copy was shortened to let the banners carry the visual identity.
+- Hero treatment is limited to the major landing pages: welcome, access,
+  overview/how-it-works, plans, workspace, review, analytics, support,
+  Operations, and private-ticket panels. Announcements and Ready to Post use
+  compact single embeds so their channels do not feel over-produced.
 - Major landing panels now publish two embeds in one Discord message: an
   image-only hero first, then a compact information card with at most three
-  inline fields and the clear next-action controls below.
+  inline fields and the clear next-action controls below. Hero companion cards
+  have no author line, footer, thumbnail, or image of their own.
 - Normal workflow cards no longer need to expose raw lifecycle values; technical
   diagnostics belong in staff-only Advanced Details.
 - A non-destructive `/setup` cleanup preview that identifies legacy/demo

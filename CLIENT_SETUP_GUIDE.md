@@ -30,17 +30,17 @@ publishing decision.
 
 - Distinct, dark SaaS-style assets and concise panels for access, overview,
   workflow, plans, workspace, review, analytics, support, and Operations.
-- The final Discord-native hero banner set is installed for welcome, access,
-  announcements, workflow, plans, workspace, review, analytics, support,
-  Operations, ready-for-decision, and private-ticket panels. The copy is kept
-  short so the images carry the visual identity.
+- The final Discord-native hero banners are used for major landing pages:
+  welcome, access, workflow, plans, workspace, review, analytics, support,
+  Operations, and private tickets. Announcements and Ready to Post remain
+  compact single panels so the server does not become visually repetitive.
 - Major landing pages place the hero banner before the compact information card,
   so the Discord journey reads like a product experience rather than a document.
 - A rules-first access path, public support entry point, member-only workspace
   area, staff-only Operations area, and private ticket flow.
 - Human-readable workflow labels: **Source Added**, **Preparing Video**,
   **Ready for Review**, **Clips Ready**, **Content Package Ready**, **Ready for
-  Publishing Decision**, **Published**, and **Needs Attention**.
+  Decision**, **Published**, and **Needs Attention**.
 - A non-destructive `/setup` cleanup preview for detected legacy/demo channels.
   It recommends cleanup but never deletes without separate owner approval.
 

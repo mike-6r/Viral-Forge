@@ -70,25 +70,40 @@ ACTION_LABELS = {
     "start_onboarding": "Continue Onboarding",
     "open_support": "Open Support",
     "open_ticket": "Open Ticket",
-    "how_it_works": "See How It Works",
+    "how_it_works": "See Workflow",
     "view_pricing": "View Plans",
     "request_access": "Request Access",
     "talk_to_sales": "Talk to Sales",
     "view_publishing_flow": "Review Workflow",
     "view_tickets": "Open Tickets",
     "open_tickets": "Open Tickets",
-    "open_review_queue": "Open Review Queue",
+    "open_review_queue": "Review Queue",
     "ready_to_post": "Ready for Decision",
     "view_ready_queue": "View Queue",
     "review_package": "Review Package",
     "view_workspace": "View Workspace",
     "view_help": "View Help",
     "add_video": "Add Video",
-    "refresh": "Check Progress",
+    "refresh": "Refresh",
     "return_to_ops_center": "Return to Ops Center",
     "open_logs": "Ticket Activity",
     "submit_feature": "Submit Request",
 }
+
+PRIMARY_PANEL_ACTIONS = frozenset(
+    {
+        ("welcome", "choose_role"),
+        ("product_overview", "start_onboarding"),
+        ("how_it_works", "start_onboarding"),
+        ("pricing", "request_access"),
+        ("workspace_guide", "start_onboarding"),
+        ("review_and_publish", "open_review_queue"),
+        ("support", "open_ticket"),
+        ("ops_center", "open_review_queue"),
+        ("ready_to_post", "view_ready_queue"),
+        ("choose_roles", "start_onboarding"),
+    }
+)
 
 # Names used by the first ViralForge community configuration. These are considered
 # cleanup candidates only after an owner explicitly confirms setup-reset.
@@ -161,7 +176,9 @@ def _public_embed(config: dict[str, Any], key: str) -> discord.Embed:
         description=item["description"],
         color=int(item.get("color", "#ff4d44").lstrip("#"), 16),
     )
-    if eyebrow := item.get("eyebrow"):
+    # A hero-first panel already has visual hierarchy. Keep its companion card
+    # deliberately sparse so Discord renders it as one intentional product post.
+    if (eyebrow := item.get("eyebrow")) and item.get("layout") != "hero_then_content":
         embed.set_author(name=str(eyebrow))
     for field in item.get("fields", [])[:3]:
         embed.add_field(
@@ -170,7 +187,7 @@ def _public_embed(config: dict[str, Any], key: str) -> discord.Embed:
             inline=bool(field.get("inline", item.get("layout") == "hero_then_content")),
         )
     branding = config["branding"]
-    if item.get("show_footer"):
+    if item.get("show_footer") and item.get("layout") != "hero_then_content":
         embed.set_footer(text=branding["footer"])
     icon_name = branding.get("icon_asset")
     if (
@@ -639,7 +656,7 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
             label=ACTION_LABELS[action],
             style=(
                 discord.ButtonStyle.primary
-                if action in {"start_onboarding", "open_support", "open_ticket", "request_access"}
+                if (panel_key, action) in PRIMARY_PANEL_ACTIONS
                 else discord.ButtonStyle.secondary
             ),
             custom_id=f"viralforge:business:panel:{panel_key}:{action}",
