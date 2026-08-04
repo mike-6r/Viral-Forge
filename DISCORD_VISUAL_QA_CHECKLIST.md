@@ -27,6 +27,10 @@ below is checked and the final result is recorded in
 
 - [ ] Each major panel displays its assigned final Discord-native hero banner,
   with the image carrying the primary visual identity.
+- [ ] Each major landing panel is one message with two embeds: an image-only
+  hero first and a compact information card second.
+- [ ] The hero embed has no title, description, fields, footer, thumbnail, or author.
+- [ ] The content embed has no more than three short inline fields.
 - [ ] No legacy/demo channel appears above `01 — START`.
 - [ ] `#welcome` reads as a concise product landing page with a single clear start path.
 - [ ] `#access` looks like a setup wizard and explains that role choices do not grant staff authority.

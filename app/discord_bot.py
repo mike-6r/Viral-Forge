@@ -1824,15 +1824,15 @@ VIRALFORGE_ERROR = 0xD94C4C
 FRIENDLY_PROJECT_STATUSES = {
     "NEW": "Source Added",
     "SOURCE_READY": "Source Added",
-    "SOURCE_REVIEW_REQUIRED": "Ready for Review",
+    "SOURCE_REVIEW_REQUIRED": "Source Review Needed",
     "SOURCE_RESOLVED": "Source Added",
     "SOURCE_ACCEPTED": "Source Added",
-    "DOWNLOADING": "Preparing Video",
+    "DOWNLOADING": "Downloading Video",
     "DOWNLOADED": "Preparing Video",
-    "ANALYZING": "Preparing Video",
-    "ANALYZED": "Ready for Review",
-    "CLIPS_SUGGESTED": "Ready for Review",
-    "RENDERING": "Preparing Video",
+    "ANALYZING": "Analyzing Content",
+    "ANALYZED": "Clip Suggestions Ready",
+    "CLIPS_SUGGESTED": "Clip Suggestions Ready",
+    "RENDERING": "Preparing Clips",
     "RENDERED": "Clips Ready",
     "CONTENT_READY": "Content Package Ready",
     "PUBLISHED": "Published",
@@ -1848,7 +1848,7 @@ FRIENDLY_PROJECT_STATUSES = {
 
 
 def friendly_project_status(status: str) -> str:
-    return FRIENDLY_PROJECT_STATUSES.get(status, "In progress")
+    return FRIENDLY_PROJECT_STATUSES.get(status, "Needs Review")
 
 
 def operational_status_embed(status: dict[str, bool]) -> discord.Embed:
@@ -3139,6 +3139,11 @@ class ProducerRecommendationView(discord.ui.View):
     ) -> None:
         if not await self._authorized(interaction):
             return
+        if not isinstance(interaction.user, discord.Member) or not is_business_staff(interaction.user):
+            await interaction.response.send_message(
+                "Advanced details are restricted to staff.", ephemeral=True
+            )
+            return
         evidence = (
             "\n".join(
                 f"• {row.get('note', 'Evidence')}: {str(row.get('value', 'not available'))[:180]}"
@@ -3653,6 +3658,11 @@ class OpportunityReviewView(discord.ui.View):
         self, interaction: discord.Interaction, _: discord.ui.Button["OpportunityReviewView"]
     ) -> None:
         if not await self._authorized(interaction):
+            return
+        if not isinstance(interaction.user, discord.Member) or not is_business_staff(interaction.user):
+            await interaction.response.send_message(
+                "Advanced details are restricted to staff.", ephemeral=True
+            )
             return
         await interaction.response.send_message(
             self.state.opportunity.explanation,
@@ -4905,6 +4915,11 @@ class GuidedProjectView(discord.ui.View):
         self, interaction: discord.Interaction, _: discord.ui.Button["GuidedProjectView"]
     ) -> None:
         if not await self._authorized(interaction):
+            return
+        if not isinstance(interaction.user, discord.Member) or not is_business_staff(interaction.user):
+            await interaction.response.send_message(
+                "Advanced details are restricted to staff.", ephemeral=True
+            )
             return
         state = await asyncio.to_thread(self.repository.dashboard, self.project_id)
         await interaction.response.send_message(

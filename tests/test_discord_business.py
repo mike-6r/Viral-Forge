@@ -5,7 +5,9 @@ from sqlalchemy import inspect
 from app.discord_bot import friendly_project_status
 from app.discord_business.discord import (
     LEGACY_MANAGED_CHANNEL_NAMES,
+    _panel_embeds,
     _private_ticket_embed,
+    _private_ticket_embeds,
     _setup_summary,
 )
 from app.discord_business.models import DiscordGuildConfig, DiscordTicket
@@ -150,6 +152,38 @@ def test_premium_panel_configuration_references_existing_assets_and_managed_chan
         assert f"`{asset}`" in manifest
 
 
+def test_major_landing_panels_publish_image_only_hero_before_compact_content_card():
+    config = load_config(Path("config/discord"))
+    panels = config["embeds"]["embeds"]
+    expected = {
+        "welcome",
+        "choose_roles",
+        "announcements",
+        "product_overview",
+        "how_it_works",
+        "pricing",
+        "workspace_guide",
+        "review_and_publish",
+        "analytics",
+        "support",
+        "ops_center",
+        "ready_to_post",
+    }
+    for key in expected:
+        assert panels[key]["layout"] == "hero_then_content"
+        hero, content = _panel_embeds(config, key)
+        assert hero.title is None
+        assert hero.description is None
+        assert not hero.fields
+        assert hero.footer.text is None
+        assert hero.author.name is None
+        assert hero.thumbnail.url is None
+        assert hero.image.url == f"attachment://{panels[key]['asset']}"
+        assert content.image.url is None
+        assert len(content.fields) <= 3
+        assert all(field.inline for field in content.fields)
+
+
 def test_discord_saas_polish_has_clean_categories_and_twenty_channels():
     config = load_config(Path("config/discord"))
     resources = plan_resources(config)
@@ -246,11 +280,20 @@ def test_discord_premium_role_and_forum_boundaries_are_configured():
 def test_private_ticket_panel_uses_the_final_ticket_hero_banner():
     config = load_config(Path("config/discord"))
     ticket = DiscordTicket(ticket_type="workspace_setup")
-    embed = _private_ticket_embed(config, ticket)
+    content = _private_ticket_embed(config, ticket)
+    hero, embed = _private_ticket_embeds(config, ticket)
 
     assert embed.title == "Private Support"
-    assert embed.image.url == "attachment://viralforge-ticket-hero.png"
+    assert content.image.url is None
+    assert hero.title is None
+    assert hero.description is None
+    assert not hero.fields
+    assert hero.footer.text is None
+    assert hero.author.name is None
+    assert hero.thumbnail.url is None
+    assert hero.image.url == "attachment://viralforge-ticket-hero.png"
     assert [field.name for field in embed.fields] == ["Issue", "Status", "Next Step"]
+    assert all(field.inline for field in embed.fields)
 
 
 def test_public_and_staff_audiences_have_strict_role_boundaries():
@@ -283,10 +326,15 @@ def test_setup_summary_lists_legacy_demo_candidates_without_deleting_them():
 
 def test_normal_workflow_statuses_are_human_readable():
     assert friendly_project_status("SOURCE_READY") == "Source Added"
-    assert friendly_project_status("CLIPS_SUGGESTED") == "Ready for Review"
+    assert friendly_project_status("SOURCE_REVIEW_REQUIRED") == "Source Review Needed"
+    assert friendly_project_status("DOWNLOADING") == "Downloading Video"
+    assert friendly_project_status("ANALYZING") == "Analyzing Content"
+    assert friendly_project_status("CLIPS_SUGGESTED") == "Clip Suggestions Ready"
+    assert friendly_project_status("RENDERING") == "Preparing Clips"
     assert friendly_project_status("RENDERED") == "Clips Ready"
     assert friendly_project_status("CONTENT_READY") == "Content Package Ready"
     assert friendly_project_status("READY_TO_POST") == "Ready for Decision"
     assert friendly_project_status("PENDING") == "Awaiting Review"
     assert friendly_project_status("RUNNING") == "In Progress"
+    assert friendly_project_status("UNKNOWN") == "Needs Review"
     assert friendly_project_status("FAILED") == "Needs Attention"

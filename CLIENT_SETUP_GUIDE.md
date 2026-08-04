@@ -34,6 +34,8 @@ publishing decision.
   announcements, workflow, plans, workspace, review, analytics, support,
   Operations, ready-for-decision, and private-ticket panels. The copy is kept
   short so the images carry the visual identity.
+- Major landing pages place the hero banner before the compact information card,
+  so the Discord journey reads like a product experience rather than a document.
 - A rules-first access path, public support entry point, member-only workspace
   area, staff-only Operations area, and private ticket flow.
 - Human-readable workflow labels: **Source Added**, **Preparing Video**,

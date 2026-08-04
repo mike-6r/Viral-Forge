@@ -11,6 +11,11 @@ The final Discord-native hero banner set is installed locally. Managed panels
 use image-first embeds with concise copy so the banner, rather than a large block
 of text, carries the visual identity.
 
+Each major landing panel is published as one Discord message with two embeds:
+the image-only hero first, followed by the compact information card and its
+components. Rerunning `/setup apply_changes: True` updates the existing managed
+messages rather than duplicating them.
+
 The current real guild also has legacy/demo clutter that requires an owner-reviewed
 cleanup. Do not claim commercial live readiness until `/setup` has completed
 successfully against the real guild and the old visible clutter has been removed

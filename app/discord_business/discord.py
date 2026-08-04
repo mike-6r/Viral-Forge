@@ -80,6 +80,9 @@ ACTION_LABELS = {
     "open_review_queue": "Open Review Queue",
     "ready_to_post": "Ready for Decision",
     "view_ready_queue": "View Queue",
+    "review_package": "Review Package",
+    "view_workspace": "View Workspace",
+    "view_help": "View Help",
     "add_video": "Add Video",
     "refresh": "Check Progress",
     "return_to_ops_center": "Return to Ops Center",
@@ -160,25 +163,55 @@ def _public_embed(config: dict[str, Any], key: str) -> discord.Embed:
     )
     if eyebrow := item.get("eyebrow"):
         embed.set_author(name=str(eyebrow))
-    for field in item.get("fields", [])[:4]:
-        embed.add_field(name=field["name"], value=field["value"], inline=False)
+    for field in item.get("fields", [])[:3]:
+        embed.add_field(
+            name=field["name"],
+            value=field["value"],
+            inline=bool(field.get("inline", item.get("layout") == "hero_then_content")),
+        )
     branding = config["branding"]
     if item.get("show_footer"):
         embed.set_footer(text=branding["footer"])
     icon_name = branding.get("icon_asset")
-    if item.get("show_icon") and icon_name and (Path(branding["asset_directory"]) / icon_name).is_file():
+    if (
+        item.get("show_icon")
+        and item.get("layout") != "hero_then_content"
+        and icon_name
+        and (Path(branding["asset_directory"]) / icon_name).is_file()
+    ):
         embed.set_thumbnail(url=f"attachment://{icon_name}")
-    asset = item.get("asset")
-    if item.get("hero_asset") and asset and (Path(branding["asset_directory"]) / asset).is_file():
-        embed.set_image(url=f"attachment://{asset}")
     return embed
+
+
+def _hero_embed(config: dict[str, Any], key: str) -> discord.Embed | None:
+    item, branding = config["embeds"]["embeds"][key], config["branding"]
+    asset = item.get("asset")
+    if (
+        item.get("layout") != "hero_then_content"
+        or not asset
+        or not (Path(branding["asset_directory"]) / asset).is_file()
+    ):
+        return None
+    embed = discord.Embed(color=int(item.get("color", "#ff4d44").lstrip("#"), 16))
+    embed.set_image(url=f"attachment://{asset}")
+    return embed
+
+
+def _panel_embeds(config: dict[str, Any], key: str) -> list[discord.Embed]:
+    content = _public_embed(config, key)
+    hero = _hero_embed(config, key)
+    return [hero, content] if hero is not None else [content]
 
 
 def _embed_files(config: dict[str, Any], key: str) -> list[discord.File]:
     item, branding = config["embeds"]["embeds"][key], config["branding"]
     root = Path(branding["asset_directory"])
     names = [
-        branding.get("icon_asset") if item.get("show_icon") else None,
+        (
+            branding.get("icon_asset")
+            if item.get("show_icon") and item.get("layout") != "hero_then_content"
+            else None
+        ),
         item.get("asset") if item.get("hero_asset") else None,
     ]
     return [discord.File(root / name, filename=name) for name in dict.fromkeys(names) if name and (root / name).is_file()]
@@ -191,14 +224,21 @@ def _private_ticket_embed(config: dict[str, Any], ticket: DiscordTicket) -> disc
         description=settings["description"],
         color=BUSINESS_COLOR,
     )
-    embed.add_field(name="Issue", value=ticket.ticket_type.replace("_", " ").title(), inline=True)
-    embed.add_field(name="Status", value="Awaiting Support", inline=True)
-    embed.add_field(name="Next Step", value="A support teammate will review this request.", inline=False)
-    asset = settings.get("hero_asset")
-    root = Path(config["branding"]["asset_directory"])
-    if asset and (root / asset).is_file():
-        embed.set_image(url=f"attachment://{asset}")
+    embed.add_field(name="Issue", value="Describe the problem", inline=True)
+    embed.add_field(name="Status", value="Staff will review", inline=True)
+    embed.add_field(name="Next Step", value="Keep details here", inline=True)
     return embed
+
+
+def _private_ticket_embeds(config: dict[str, Any], ticket: DiscordTicket) -> list[discord.Embed]:
+    content = _private_ticket_embed(config, ticket)
+    asset = config["tickets"].get("hero_asset")
+    root = Path(config["branding"]["asset_directory"])
+    if not asset or not (root / asset).is_file():
+        return [content]
+    hero = discord.Embed(color=BUSINESS_COLOR)
+    hero.set_image(url=f"attachment://{asset}")
+    return [hero, content]
 
 
 def _private_ticket_files(config: dict[str, Any]) -> list[discord.File]:
@@ -646,7 +686,7 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
                 ephemeral=True,
             )
             return
-        if self.action in {"ready_to_post", "view_ready_queue"}:
+        if self.action in {"ready_to_post", "view_ready_queue", "review_package"}:
             await interaction.response.send_message(
                 "Use `/viralforge ready-to-post` to review content waiting for a human publishing decision.",
                 ephemeral=True,
@@ -661,6 +701,8 @@ class PanelActionButton(discord.ui.Button["PanelActionView"]):
             "open_tickets": "ticket_logs",
             "open_logs": "ticket_logs",
             "return_to_ops_center": "ops_center",
+            "view_workspace": "workspace_guide",
+            "view_help": "support",
         }.get(self.action)
         if self.action == "refresh":
             await interaction.response.send_message(
@@ -717,6 +759,104 @@ class SupportTopicView(discord.ui.View):
     def __init__(self, config: dict[str, Any]) -> None:
         super().__init__(timeout=300)
         self.add_item(SupportTopicSelect(config))
+
+
+class PrivateTicketView(discord.ui.View):
+    """Persistent requester/staff actions for one private ticket channel."""
+
+    def __init__(self) -> None:
+        super().__init__(timeout=None)
+
+    @staticmethod
+    def _ticket_for_interaction(interaction: discord.Interaction) -> tuple[DiscordTicket | None, Session]:
+        session = _session()
+        ticket = (
+            session.query(DiscordTicket)
+            .filter_by(discord_channel_id=str(interaction.channel_id))
+            .one_or_none()
+        )
+        return ticket, session
+
+    @staticmethod
+    def _can_manage(ticket: DiscordTicket, member: discord.Member) -> bool:
+        return ticket.requester_discord_user_id == str(member.id) or is_business_staff(member)
+
+    @discord.ui.button(
+        label="Close Ticket",
+        style=discord.ButtonStyle.danger,
+        custom_id="viralforge:business:ticket:close",
+    )
+    async def close(
+        self, interaction: discord.Interaction, _: discord.ui.Button[PrivateTicketView]
+    ) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in the support server.", ephemeral=True)
+            return
+        ticket, session = self._ticket_for_interaction(interaction)
+        try:
+            if ticket is None:
+                await interaction.response.send_message("This ticket is no longer active.", ephemeral=True)
+                return
+            if not self._can_manage(ticket, interaction.user):
+                await interaction.response.send_message("Only the requester or support staff can close this ticket.", ephemeral=True)
+                return
+            if ticket.status != "CLOSED":
+                OperationsRepository().transition_ticket(
+                    session, ticket, "CLOSED", interaction.user.id, "Closed from private ticket panel"
+                )
+                session.commit()
+        except OperationsError as error:
+            session.rollback()
+            await interaction.response.send_message(f"Ticket close stopped safely: {error}", ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message(
+            "This ticket is closed. Open a new request in #support if you need more help."
+        )
+
+    @discord.ui.button(
+        label="Request Staff",
+        style=discord.ButtonStyle.primary,
+        custom_id="viralforge:business:ticket:request-staff",
+    )
+    async def request_staff(
+        self, interaction: discord.Interaction, _: discord.ui.Button[PrivateTicketView]
+    ) -> None:
+        if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+            await interaction.response.send_message("Use this in the support server.", ephemeral=True)
+            return
+        ticket, session = self._ticket_for_interaction(interaction)
+        try:
+            if ticket is None:
+                await interaction.response.send_message("This ticket is no longer active.", ephemeral=True)
+                return
+            if not self._can_manage(ticket, interaction.user):
+                await interaction.response.send_message("Only the requester or support staff can update this ticket.", ephemeral=True)
+                return
+            if ticket.status == "NEW":
+                OperationsRepository().transition_ticket(session, ticket, "OPEN", interaction.user.id)
+            ticket.escalation_reason = "Requester asked for staff review."
+            session.commit()
+        except OperationsError as error:
+            session.rollback()
+            await interaction.response.send_message(f"Staff request stopped safely: {error}", ephemeral=True)
+            return
+        finally:
+            session.close()
+        await interaction.response.send_message("Staff review was requested for this private ticket.")
+
+    @discord.ui.button(
+        label="Return to Support",
+        style=discord.ButtonStyle.secondary,
+        custom_id="viralforge:business:ticket:return-support",
+    )
+    async def return_to_support(
+        self, interaction: discord.Interaction, _: discord.ui.Button[PrivateTicketView]
+    ) -> None:
+        await interaction.response.send_message(
+            "Return to #support to open another private request or view help.", ephemeral=True
+        )
 
 
 class OnboardingSelect(discord.ui.Select["OnboardingView"]):
@@ -862,8 +1002,9 @@ async def _open_ticket(interaction: discord.Interaction, ticket_type: str, prior
     finally:
         session.close()
     await channel.send(
-        embed=_private_ticket_embed(config, ticket),
+        embeds=_private_ticket_embeds(config, ticket),
         files=_private_ticket_files(config),
+        view=PrivateTicketView(),
     )
     await interaction.response.send_message(
         f"Private support ticket created: {channel.mention}", ephemeral=True
@@ -881,7 +1022,7 @@ async def publish_public_embeds(guild: discord.Guild) -> int:
             channel = _resource(session, repo, guild, "channel", channel_key)
             if not isinstance(channel, (discord.TextChannel, discord.ForumChannel)):
                 continue
-            embed = _public_embed(config, embed_key)
+            embeds = _panel_embeds(config, embed_key)
             files = _embed_files(config, embed_key)
             view: discord.ui.View | None
             if embed_key == "choose_roles":
@@ -904,17 +1045,17 @@ async def publish_public_embeds(guild: discord.Guild) -> int:
                     else:
                         message = await channel.fetch_message(int(saved.discord_message_id))
                     if message is not None:
-                        await message.edit(embed=embed, view=view, attachments=files)
+                        await message.edit(embeds=embeds, view=view, attachments=files)
                 except discord.NotFound:
                     message = None
             if message is None:
                 if isinstance(channel, discord.ForumChannel):
                     post = await channel.create_thread(
-                        name=panel["title"][:100], embed=embed, view=view, files=files
+                        name=panel["title"][:100], embeds=embeds, view=view, files=files
                     )
                     message = post.message
                 else:
-                    message = await channel.send(embed=embed, view=view, files=files)
+                    message = await channel.send(embeds=embeds, view=view, files=files)
             repo.save_embed(session, guild_config, embed_key, channel_key, message.id)
             sent += 1
         session.commit()
@@ -1177,6 +1318,7 @@ def register_business_commands(bot: Any) -> None:
     bot._business_commands_registered = True
     bot.add_view(RulesAcceptanceView())
     bot.add_view(SelfRoleView())
+    bot.add_view(PrivateTicketView())
     for panel_key, panel in load_config()["embeds"]["embeds"].items():
         if panel_key != "choose_roles" and "accept_rules" not in panel.get("actions", []):
             bot.add_view(PanelActionView(panel_key, panel.get("actions", [])))

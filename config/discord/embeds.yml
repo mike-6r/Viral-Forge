@@ -7,12 +7,13 @@ embeds:
     color: "#FF4F2E"
     asset: viralforge-welcome-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_icon: true
     show_footer: true
     fields:
-      - {name: Submit, value: "Add authorized source material."}
-      - {name: Review, value: "Review clips and content packages before anything goes live."}
-      - {name: Decide, value: "Make human publishing decisions from one workspace."}
+      - {name: Submit, value: "Authorized sources"}
+      - {name: Review, value: "Human approval gates"}
+      - {name: Decide, value: "No automatic upload"}
     actions: [choose_role, how_it_works, open_support]
   standards:
     channel: welcome
@@ -33,11 +34,12 @@ embeds:
     color: "#5B8CFF"
     asset: viralforge-access-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: true
     fields:
-      - {name: Account type, value: "Choose Creator, Brand, or Agency."}
-      - {name: Notifications, value: "Choose only the updates you want."}
-      - {name: Continue, value: "Finish onboarding when you are ready."}
+      - {name: Account, value: "Creator / Brand / Agency"}
+      - {name: Alerts, value: "Only what you want"}
+      - {name: Workspace, value: "Continue when ready"}
     actions: []
   announcements:
     channel: announcements
@@ -47,9 +49,12 @@ embeds:
     color: "#FF4F2E"
     asset: viralforge-announcements-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Read-only by design, value: "Reply in Support or Community so official updates stay easy to scan."}
+      - {name: Read-only, value: "Official updates only"}
+      - {name: Support, value: "Use tickets for help"}
+      - {name: Community, value: "Use discussion channels"}
     actions: []
   product_overview:
     channel: product_overview
@@ -59,11 +64,12 @@ embeds:
     color: "#FF4F2E"
     asset: viralforge-workflow-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Source, value: "Add authorized sources and videos."}
-      - {name: Prepare + Review, value: "Inspect media and approve creative work."}
-      - {name: Decide, value: "Ready for Decision never means automatic upload."}
+      - {name: Source, value: "Authorized material"}
+      - {name: Review, value: "Human approval gates"}
+      - {name: Decision, value: "No automatic upload"}
     actions: [how_it_works, start_onboarding, view_pricing]
   how_it_works:
     channel: how_it_works
@@ -73,11 +79,12 @@ embeds:
     color: "#5B8CFF"
     asset: viralforge-workflow-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Discover + Clip, value: "Find authorized sources and prepare strong moments."}
-      - {name: Review, value: "Check creative output and context."}
-      - {name: Decide, value: "A person chooses whether approved content goes live."}
+      - {name: Discover, value: "Find source material"}
+      - {name: Review, value: "Approve creative work"}
+      - {name: Decide, value: "Human publishing choice"}
     actions: [start_onboarding, view_pricing, open_support]
   pricing:
     channel: pricing_and_access
@@ -87,11 +94,12 @@ embeds:
     color: "#FF4F2E"
     asset: viralforge-plans-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Creator + Professional, value: "Focused brands and growing review volume."}
-      - {name: Agency, value: "Multiple brands and client workspaces."}
-      - {name: Enterprise, value: "Custom workflows, integrations, and dedicated support."}
+      - {name: Creator, value: "One brand"}
+      - {name: Agency, value: "Client workspaces"}
+      - {name: Enterprise, value: "Custom support"}
     actions: [request_access, talk_to_sales, view_pricing]
   workspace_guide:
     channel: workspace_guide
@@ -101,11 +109,12 @@ embeds:
     color: "#5B8CFF"
     asset: viralforge-workspace-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Sources, value: "Keep approved sources in context."}
-      - {name: Review Queue, value: "Make human decisions for each brand."}
-      - {name: Analytics, value: "Keep rules and learning brand-scoped."}
+      - {name: Sources, value: "Approved media"}
+      - {name: Reviews, value: "Human decisions"}
+      - {name: Analytics, value: "Brand learning"}
     actions: [start_onboarding, open_support]
   review_and_publish:
     channel: review_and_publish
@@ -115,11 +124,12 @@ embeds:
     color: "#FF4F2E"
     asset: viralforge-review-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Creative Review, value: "Approve or reject clips and content packages."}
-      - {name: Context Check, value: "Review attribution, warnings, and source acceptance."}
-      - {name: Publishing Decision, value: "Ready for Decision still needs human action."}
+      - {name: Clips, value: "Approve creative"}
+      - {name: Context, value: "Check rights"}
+      - {name: Decision, value: "Human controlled"}
     actions: [open_review_queue, how_it_works, open_support]
   analytics:
     channel: analytics
@@ -129,12 +139,13 @@ embeds:
     color: "#5B8CFF"
     asset: viralforge-analytics-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Signals, value: "Use available performance signals."}
-      - {name: Patterns, value: "Compare hooks, pacing, topics, and formats."}
-      - {name: Recommendations, value: "People remain in control of decisions."}
-    actions: [start_onboarding, open_support]
+      - {name: Signals, value: "Views / retention"}
+      - {name: Patterns, value: "Hooks / pacing"}
+      - {name: Control, value: "People decide"}
+    actions: [view_workspace, open_support]
   onboarding:
     channel: onboarding
     eyebrow: ONBOARDING
@@ -156,10 +167,13 @@ embeds:
     color: "#5B8CFF"
     asset: viralforge-support-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Keep it secure, value: "Never paste credentials, passwords, private media, or tokens in public channels."}
-    actions: [open_ticket]
+      - {name: Access, value: "Accounts / roles"}
+      - {name: Workflow, value: "Sources / publishing"}
+      - {name: Bugs, value: "Issues / fixes"}
+    actions: [open_ticket, view_help]
   feature_requests:
     channel: feature_requests
     eyebrow: PRODUCT FEEDBACK
@@ -178,11 +192,12 @@ embeds:
     color: "#FF4F2E"
     asset: viralforge-ops-center-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Needs Attention, value: "Start with blocked work and escalated support."}
-      - {name: Review Queue, value: "Open the next creative decision for the active brand."}
-      - {name: Ready for Decision, value: "Publishing always requires a human decision."}
+      - {name: Attention, value: "Needs review"}
+      - {name: Queue, value: "Ready for decision"}
+      - {name: Support, value: "Open tickets"}
     actions: [open_review_queue, ready_to_post, add_video, open_tickets, refresh]
   ready_to_post:
     channel: ready_to_post
@@ -192,8 +207,10 @@ embeds:
     color: "#F5A524"
     asset: viralforge-ready-to-post-hero.png
     hero_asset: true
+    layout: hero_then_content
     show_footer: false
     fields:
-      - {name: Human decision required, value: "Ready for Decision does not mean automatic upload."}
-      - {name: Before proceeding, value: "Confirm source, rights, moderation, clip, package, and destination."}
-    actions: [ready_to_post, open_review_queue, return_to_ops_center]
+      - {name: Approved, value: "Review complete"}
+      - {name: Waiting, value: "Human decision"}
+      - {name: Safety, value: "No automatic upload"}
+    actions: [view_ready_queue, review_package, return_to_ops_center]
